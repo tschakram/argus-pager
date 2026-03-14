@@ -349,15 +349,21 @@ _bt_list() {
 
 # ═════════════════════════════════════════════════════════════════════════════
 # ANALYSE-FUNKTIONEN
+# Kein Subshell-Pattern (rpt=$(...)) — Report-Pfad + RC werden als Globals
+# gesetzt, damit START_SPINNER im Subshell-Kontext keine stdout-Kontamination
+# verursachen kann.
 # ═════════════════════════════════════════════════════════════════════════════
+LATEST_REPORT=""
+ANALYSIS_RC=0
 
 # ── CYT Analyse (Modi 0-3, 5) ─────────────────────────────────────────────────
-# Gibt Report-Pfad auf stdout aus; $? = 2 wenn verdächtig
+# Setzt LATEST_REPORT und ANALYSIS_RC (0=clean, 2=verdächtig)
 do_cyt_analysis() {
     local pcap_list="$1" bt_list="$2" min_apps="$3"
+    LATEST_REPORT=""; ANALYSIS_RC=0
     local spid
     spid=$(spin_start "CYT Analyse...")
-    local out rc
+    local out
     out=$(python3 "$CYT_PY/analyze_pcap.py" \
         --pcaps "$pcap_list" \
         --config "$CONFIG" \
@@ -365,33 +371,30 @@ do_cyt_analysis() {
         --threshold "$PERSISTENCE_THRESHOLD" \
         --min-appearances "$min_apps" \
         ${bt_list:+--bt-scans "$bt_list"} 2>&1)
-    rc=$?
+    ANALYSIS_RC=$?
     spin_stop "$spid"
-    local rpt
-    rpt=$(echo "$out" | grep "REPORT_PATH:" | cut -d: -f2-)
-    [ -z "$rpt" ] && rpt=$(ls "$REPORT_DIR"/cyt_report_*.md 2>/dev/null | sort | tail -1)
-    echo "$rpt"
-    return $rc
+    LATEST_REPORT=$(echo "$out" | grep "REPORT_PATH:" | cut -d: -f2-)
+    [ -z "$LATEST_REPORT" ] && \
+        LATEST_REPORT=$(ls "$REPORT_DIR"/cyt_report_*.md 2>/dev/null | sort | tail -1)
 }
 
 # ── Hotel-Scan Analyse (Modi 4, 6) ────────────────────────────────────────────
-# Gibt Report-Pfad auf stdout aus; $? = 2 wenn Kamera-Verdacht
+# Setzt LATEST_REPORT und ANALYSIS_RC (0=clean, 2=Kamera-Verdacht)
 do_hotel_analysis() {
     local pcap_list="$1" bt_file="$2"
+    LATEST_REPORT=""; ANALYSIS_RC=0
     local spid
     spid=$(spin_start "Hotel-Analyse...")
-    local out rc
+    local out
     out=$(python3 "$CYT_PY/hotel_scan.py" \
         --pcap "$pcap_list" \
         ${bt_file:+--bt-scan "$bt_file"} \
         --output-dir "$REPORT_DIR" 2>&1)
-    rc=$?
+    ANALYSIS_RC=$?
     spin_stop "$spid"
-    local rpt
-    rpt=$(echo "$out" | grep "REPORT_PATH:" | cut -d: -f2-)
-    [ -z "$rpt" ] && rpt=$(ls "$REPORT_DIR"/hotel_scan_*.md 2>/dev/null | sort | tail -1)
-    echo "$rpt"
-    return $rc
+    LATEST_REPORT=$(echo "$out" | grep "REPORT_PATH:" | cut -d: -f2-)
+    [ -z "$LATEST_REPORT" ] && \
+        LATEST_REPORT=$(ls "$REPORT_DIR"/hotel_scan_*.md 2>/dev/null | sort | tail -1)
 }
 
 # ── Cell-Scan via Mudi (Modi 5, 6) ────────────────────────────────────────────
@@ -556,18 +559,18 @@ run_mode_cyt() {
 
     LED amber solid
     LOG ""
-    local pcap_list bt_list rpt rc
+    local pcap_list bt_list
     pcap_list=$(_pcap_list)
     bt_list=$(_bt_list)
-    rpt=$(do_cyt_analysis "$pcap_list" "$bt_list" "$min_apps")
-    rc=$?
+    do_cyt_analysis "$pcap_list" "$bt_list" "$min_apps"
 
     LOG blue "━━━━━━━━━━━━━━━━━━━━━━━━━━"
     LOG blue "       ERGEBNIS"
     LOG blue "━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    [ -f "$rpt" ] && show_cyt_result "$rpt" "$rc" false || LOG yellow "⚠ Kein Report"
+    [ -f "$LATEST_REPORT" ] && show_cyt_result "$LATEST_REPORT" "$ANALYSIS_RC" false \
+        || LOG yellow "⚠ Kein Report"
 
-    _watch_list_ui "$rpt"
+    _watch_list_ui "$LATEST_REPORT"
     LOG ""
     LOG "Drücke ROT zum Beenden"
     WAIT_FOR_BUTTON_PRESS "red"
@@ -585,17 +588,17 @@ run_mode_hotel() {
 
     LED amber solid
     LOG ""
-    local pcap_list bt_list bt_first rpt rc
+    local pcap_list bt_list bt_first
     pcap_list=$(_pcap_list)
     bt_list=$(_bt_list)
     bt_first=$(echo "$bt_list" | cut -d',' -f1)
-    rpt=$(do_hotel_analysis "$pcap_list" "$bt_first")
-    rc=$?
+    do_hotel_analysis "$pcap_list" "$bt_first"
 
     LOG blue "━━━━━━━━━━━━━━━━━━━━━━━━━━"
     LOG blue "     HOTEL ERGEBNIS"
     LOG blue "━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    [ -f "$rpt" ] && show_cyt_result "$rpt" "$rc" true || LOG yellow "⚠ Kein Report"
+    [ -f "$LATEST_REPORT" ] && show_cyt_result "$LATEST_REPORT" "$ANALYSIS_RC" true \
+        || LOG yellow "⚠ Kein Report"
 
     LOG ""
     LOG "Drücke ROT zum Beenden"
@@ -642,15 +645,16 @@ run_mode_argus() {
     [ "$min_apps" -lt 3 ]  && min_apps=3
     [ "$min_apps" -gt 15 ] && min_apps=15
 
-    local cyt_rpt cyt_rc
-    cyt_rpt=$(do_cyt_analysis "$pcap_list" "$bt_list" "$min_apps")
-    cyt_rc=$?
+    do_cyt_analysis "$pcap_list" "$bt_list" "$min_apps"
+    local argus_cyt_report="$LATEST_REPORT"
+    local argus_cyt_rc="$ANALYSIS_RC"
 
     # ── Ergebnis ──────────────────────────────────────────────
     LOG blue "━━━━━━━━━━━━━━━━━━━━━━━━━━"
     LOG blue "   WiFi / BT"
     LOG blue "━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    [ -f "$cyt_rpt" ] && show_cyt_result "$cyt_rpt" "$cyt_rc" false || LOG yellow "⚠ Kein WiFi-Report"
+    [ -f "$argus_cyt_report" ] && show_cyt_result "$argus_cyt_report" "$argus_cyt_rc" false \
+        || LOG yellow "⚠ Kein WiFi-Report"
 
     LOG ""
     LOG blue "━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -664,7 +668,7 @@ run_mode_argus() {
     fi
 
     # Gesamt-Threat
-    local overall=$((cyt_rc == 2 ? 2 : 0))
+    local overall=$(( argus_cyt_rc == 2 ? 2 : 0 ))
     [ "${CELL_THREAT:-0}" -gt "$overall" ] && overall="$CELL_THREAT"
 
     LOG ""
@@ -673,7 +677,7 @@ run_mode_argus() {
     LOG blue "━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
     local wifi_susp cell_lbl gps_line
-    wifi_susp=$(grep "Verdächtig" "$cyt_rpt" 2>/dev/null | grep -o '[0-9]*' | head -1)
+    wifi_susp=$(grep "Verdächtig" "$argus_cyt_report" 2>/dev/null | grep -o '[0-9]*' | head -1)
     cell_lbl=$(threat_label "${CELL_THREAT:-0}")
     gps_line="kein GPS"
     [ -n "$GPS_LAT" ] && gps_line="$(printf '%.4f' "$GPS_LAT"), $(printf '%.4f' "$GPS_LON")"
@@ -687,7 +691,7 @@ run_mode_argus() {
 
     [ "$overall" -ge 2 ] && VIBRATE 5
 
-    _watch_list_ui "$cyt_rpt"
+    _watch_list_ui "$argus_cyt_report"
 
     LOG ""
     LOG "Drücke ROT zum Beenden"
@@ -731,15 +735,16 @@ run_mode_hotel2() {
     bt_list=$(_bt_list)
     bt_first=$(echo "$bt_list" | cut -d',' -f1)
 
-    local hotel_rpt hotel_rc
-    hotel_rpt=$(do_hotel_analysis "$pcap_list" "$bt_first")
-    hotel_rc=$?
+    do_hotel_analysis "$pcap_list" "$bt_first"
+    local hotel2_rpt="$LATEST_REPORT"
+    local hotel2_rc="$ANALYSIS_RC"
 
     # ── Ergebnis ──────────────────────────────────────────────
     LOG blue "━━━━━━━━━━━━━━━━━━━━━━━━━━"
     LOG blue "   Hotel Scan (Kameras)"
     LOG blue "━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    [ -f "$hotel_rpt" ] && show_cyt_result "$hotel_rpt" "$hotel_rc" true || LOG yellow "⚠ Kein Hotel-Report"
+    [ -f "$hotel2_rpt" ] && show_cyt_result "$hotel2_rpt" "$hotel2_rc" true \
+        || LOG yellow "⚠ Kein Hotel-Report"
 
     LOG ""
     LOG blue "━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -754,8 +759,8 @@ run_mode_hotel2() {
 
     # Kombinierter Report
     local wcam bcam cell_lbl gps_line
-    wcam=$(grep "WiFi Kamera-Verdächtige:" "$hotel_rpt" 2>/dev/null | grep -o '[0-9]*' | head -1)
-    bcam=$(grep "BLE Kamera/IoT-Verdächtige:" "$hotel_rpt" 2>/dev/null | grep -o '[0-9]*' | head -1)
+    wcam=$(grep "WiFi Kamera-Verdächtige:" "$hotel2_rpt" 2>/dev/null | grep -o '[0-9]*' | head -1)
+    bcam=$(grep "BLE Kamera/IoT-Verdächtige:" "$hotel2_rpt" 2>/dev/null | grep -o '[0-9]*' | head -1)
     cell_lbl=$(threat_label "${CELL_THREAT:-0}")
     gps_line="kein GPS"
     [ -n "$GPS_LAT" ] && gps_line="$(printf '%.4f' "$GPS_LAT"), $(printf '%.4f' "$GPS_LON")"
@@ -769,7 +774,7 @@ run_mode_hotel2() {
 
     # Kombinierter Alert
     local overall=0
-    [ "${hotel_rc:-0}" -eq 2 ] && overall=2
+    [ "${hotel2_rc:-0}" -eq 2 ] && overall=2
     [ "${CELL_THREAT:-0}" -gt "$overall" ] && overall="$CELL_THREAT"
     [ "$overall" -ge 2 ] && VIBRATE 5
 
@@ -801,6 +806,7 @@ _watch_list_ui() {
         LOG blue "   Watch-List Management"
         LOG blue "━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
+        # MACs nummeriert ab 1; Skip = mac_count+1 (letzter Eintrag, als Default)
         local i=1
         while IFS='|' read -r wl_mac wl_vendor; do
             [ -z "$wl_mac" ] && continue
@@ -808,10 +814,11 @@ _watch_list_ui() {
             LOG "     $wl_mac"
             i=$((i+1))
         done < "$wl_tmp"
-        LOG "  0. Überspringen"
+        local skip_idx=$((mac_count + 1))
+        LOG "  $skip_idx. Überspringen"
         sleep 8
 
-        local WL_LABEL="0=Skip " wi=1
+        local WL_LABEL="" wi=1
         while IFS='|' read -r wl_mac wl_vendor; do
             [ -z "$wl_mac" ] && continue
             local sfx
@@ -819,13 +826,14 @@ _watch_list_ui() {
             WL_LABEL="${WL_LABEL}${wi}=${sfx} "
             wi=$((wi+1))
         done < "$wl_tmp"
+        WL_LABEL="${WL_LABEL}${skip_idx}=Skip"
 
         local pick
-        pick=$(NUMBER_PICKER "${WL_LABEL% }:" 0)
+        pick=$(NUMBER_PICKER "${WL_LABEL}:" $skip_idx)   # Default = Skip
         [ $? -ne 0 ] && rm -f "$wl_tmp" && return
-        [ "$pick" -eq 0 ] 2>/dev/null && rm -f "$wl_tmp" && return
+        [ "$pick" -eq "$skip_idx" ] 2>/dev/null && rm -f "$wl_tmp" && return
 
-        if [ "$pick" -gt 0 ] 2>/dev/null && [ "$pick" -le "$mac_count" ] 2>/dev/null; then
+        if [ "$pick" -ge 1 ] 2>/dev/null && [ "$pick" -le "$mac_count" ] 2>/dev/null; then
             local sel_line sel_mac sel_vendor
             sel_line=$(sed -n "${pick}p" "$wl_tmp")
             sel_mac=$(echo "$sel_line" | cut -d'|' -f1)
@@ -844,7 +852,8 @@ _watch_list_ui() {
                 local wl_out wl_status
                 wl_out=$(python3 "$CYT_PY/watchlist_add.py" \
                     --mac "$sel_mac" --label "$sel_vendor" \
-                    --type "$watch_type" --config "$CONFIG" 2>/dev/null)
+                    --type "$watch_type" --config "$CONFIG" \
+                    --path "$LOOT_DIR/watch_list.json" 2>/dev/null)
                 wl_status=$(echo "$wl_out" | grep "^WATCHLIST:" | cut -d: -f2)
                 case "$wl_status" in
                     OK)             VIBRATE 3; LOG green "✓ Watch-List: $sel_mac ($watch_type)" ;;
