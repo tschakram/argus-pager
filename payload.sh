@@ -977,13 +977,17 @@ _imei_change_ui() {
     fi
 
     local spid
-    spid=$(spin_start "Blue Merle — IMEI Randomize...")
-    mudi_py "blue_merle.py" "randomize" >/dev/null 2>&1
+    spid=$(spin_start "Blue Merle — IMEI Rotate...")
+    local bm_out
+    bm_out=$(mudi_py "blue_merle.py" "rotate" 2>/dev/null)
     local rc=$?
     spin_stop "$spid"
 
+    local imei_new
+    imei_new=$(echo "$bm_out" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('imei_after','?'))" 2>/dev/null)
+
     if [ "$rc" -eq 0 ]; then
-        LOG green "✓ IMEI randomisiert"
+        LOG green "✓ IMEI rotiert: ${imei_new:-?}"
         LOG "   Mudi bootet neu..."
         sleep 2
         LOG ""
