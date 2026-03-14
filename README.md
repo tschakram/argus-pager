@@ -24,6 +24,10 @@ Modi 5 und 6 benötigen den Mudi V2 (GL-E750V2) mit laufendem raypager.
 
 ## How to Use
 
+> ⚠️ Der Payload **muss** über das **Pager-Dashboard** gestartet werden:
+> `Payloads → User → Reconnaissance → argus-pager`
+> Nicht über `bash payload.sh` in SSH – Pager-APIs funktionieren nur im Dashboard-Kontext.
+
 ### Schnellstart
 
 1. Pager via USB-C mit Laptop verbinden
@@ -35,7 +39,7 @@ Modi 5 und 6 benötigen den Mudi V2 (GL-E750V2) mit laufendem raypager.
 
 Nach Wahl `2 = Manuell`:
 
-1. **Modus wählen** (0–6, siehe Tabelle oben)
+1. **Modus wählen** (0–6, siehe Scan-Modi-Tabelle oben)
 2. **Runden** eingeben — wie oft der Scan wiederholt wird
 3. **Dauer** (Sekunden) — Länge einer Scan-Runde
 4. Scan läuft automatisch — LED blinkt blau während Capture
@@ -47,17 +51,119 @@ Nach Wahl `2 = Manuell`:
 - **OpenCelliD Upload**: Wenn Queue nicht leer → Dialog zum Hochladen der gesammelten Messungen (Modi 5+6)
 - **IMEI Rotation** (OPSEC): `2 = IMEI Change` wählen → Mudi rotiert IMEI und bootet neu
 
-### Ignore-Listen pflegen
+---
 
-Eigene Geräte (Handy, Laptop, Smart-Home) in die Ignore-Listen eintragen damit sie nicht als verdächtig gemeldet werden:
+### Schritt 1 — Ignore-Listen einrichten
 
-```bash
-# Auf dem Pager:
-vi /root/loot/argus/ignore_lists/mac_list.json
-vi /root/loot/argus/ignore_lists/ssid_list.json
+Eigene Geräte **vor dem ersten Scan** eintragen, um Fehlalarme zu vermeiden.
+Die Dateien liegen in `/root/loot/argus/ignore_lists/` auf dem Pager (gitignored).
+
+**`mac_list.json`** — eigene WiFi- und Bluetooth-Geräte:
+```json
+{
+  "ignore_macs": ["AA:BB:CC:DD:EE:FF", "11:22:33:44:55:66"],
+  "comments": {
+    "AA:BB:CC:DD:EE:FF": "Eigenes Garmin GPS",
+    "11:22:33:44:55:66": "Eigener JBL Lautsprecher"
+  }
+}
 ```
 
-Format: siehe `ignore_lists/mac_list.example.json` im Repo.
+**`ssid_list.json`** — eigene Heimnetzwerke (unterdrückt Probe-SSID-Fehlalarme):
+```json
+{
+  "ignore_ssids": ["MeinHeimnetz", "Buero-WLAN"],
+  "comments": {
+    "MeinHeimnetz": "Heimnetz – ignorieren"
+  }
+}
+```
+
+> **Tipp:** Führe zuerst einen Scan im Modus 0 zuhause durch. Alle verdächtigen Geräte gehören wahrscheinlich dir selbst. MAC in `mac_list.json` eintragen, dann erneut scannen.
+
+---
+
+### Schritt 2 — Bekannte Zonen konfigurieren (optional)
+
+GPS-Koordinaten werden **ausschließlich in `config.json` auf dem Pager** gespeichert — nie im Repository.
+
+```json
+"watch_list": {
+  "default_zone_radius_m": 100,
+  "known_zones": [
+    { "name": "Zuhause", "lat": 0.000000, "lon": 0.000000, "radius_m": 150 },
+    { "name": "Büro",    "lat": 0.000000, "lon": 0.000000, "radius_m": 100 }
+  ]
+}
+```
+
+Die `config.example.json` im Repository enthält nur Platzhalter-Koordinaten (`0.000000`).
+
+---
+
+### Schritt 3 — Verdächtige Geräte zur Watch-List hinzufügen
+
+Nach jedem Scan können verdächtige Geräte direkt am Pager-Display zur **Watch-List** hinzugefügt werden:
+
+| Typ | Anwendungsfall | Alarm wenn… |
+|-----|----------------|-------------|
+| **Dynamic** | Unbekanntes Gerät, mehrfach gesehen | Gerät taucht an einem neuen Ort auf (> 500 m entfernt) |
+| **Static** | Bekanntes Gerät (z.B. Nachbar-Router) | Gerät taucht außerhalb seiner GPS-Zone auf |
+
+- **Dynamic** ist die richtige Wahl bei Tracking-Verdacht — das Gerät folgt dir über verschiedene Orte.
+- **Static** eignet sich für Geräte, die nur an einem festen Ort sein sollten (Zuhause, Hotel, Büro).
+
+---
+
+### Schritt 4 — Scan-Einstellungen wählen
+
+Der **Persistence-Score** (`Erscheinungen ÷ Runden gesamt`) ist die zentrale Kennzahl.
+Ein Score ≥ 0,6 markiert ein Gerät als verdächtig.
+
+| Anwendungsfall | Runden | Dauer/Runde | Gesamtzeit | Hinweis |
+|----------------|--------|-------------|------------|---------|
+| Schnellcheck | 2 | 120 s | ~ 4 Min. | Geringe Aussagekraft |
+| Standard | 3 | 300 s | ~ 15 Min. | Gute Balance |
+| **Empfohlen (mobil)** | **5** | **120 s** | **~ 10 Min.** | Beste geografische Diversität |
+| Hohe Sicherheit | 5 | 300 s | ~ 25 Min. | Für geplante Stopps |
+
+**Grundprinzip:** Geografische Diversität schlägt reine Scan-Dauer.
+Ein Gerät, das an fünf verschiedenen Orten auftaucht, ist wesentlich verdächtiger als eines, das lange an einem einzigen Ort zu sehen ist.
+
+---
+
+### Beispiel: 45-Minuten-Fahrt
+
+**Empfohlen:** Modus 5 (Argus Full) · 5 Runden · 120 s/Runde
+
+```
+Start  →  [Runde 1: 2 Min.]  →  3–5 km fahren
+       →  [Runde 2: 2 Min.]  →  3–5 km fahren
+       →  [Runde 3: 2 Min.]  →  3–5 km fahren
+       →  [Runde 4: 2 Min.]  →  3–5 km fahren
+       →  [Runde 5: 2 Min.]  →  Analyse + Report
+
+Scan-Zeit: ~12 Min.  |  Fahrzeit zwischen den Runden: ~33 Min.
+```
+
+**So liest du den Report:**
+
+| Persistence | Erscheinungen | Bewertung |
+|-------------|---------------|-----------|
+| 1,00 | 5 / 5 | 🔴 Starker Hinweis — Gerät folgt dir |
+| 0,80 | 4 / 5 | 🔴 Sehr verdächtig |
+| 0,60 | 3 / 5 | 🟡 An der Schwelle — weiter beobachten |
+| 0,40 | 2 / 5 | 🟢 Wahrscheinlich Zufall |
+| 0,20 | 1 / 5 | 🟢 Nicht verdächtig |
+
+**Praktische Tipps:**
+
+- Runde starten, losfahren — die nächste Runde beginnt automatisch, kein Anhalten nötig
+- Gerät mit Score 0,6 beim ersten Lauf: Route wiederholen. Ein echter Verfolger erreicht dann 1,0
+- Mit WiGLE aktiviert: Probe-SSIDs im Report können das Heimnetzwerk des Verfolgers verraten
+- Modus 5 liefert zusätzlich Cell-Threat-Level — ein GHOST oder MISMATCH auf dem gleichen Abschnitt erhöht den Verdacht erheblich
+
+---
 
 ### LED-Status
 
