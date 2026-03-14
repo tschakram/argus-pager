@@ -41,6 +41,51 @@ Pager  →  SSH      →  Mudi V2:
 
 ---
 
+## Voraussetzungen
+
+### WiFi Pineapple Pager
+
+| Paket | Zweck | Installation |
+|-------|-------|-------------|
+| `python3` | Analyse-Scripts | `opkg install -d mmc python3` |
+| `tcpdump` | 5/6 GHz PCAP via wlan1mon | meist vorinstalliert |
+| `bluez-utils` | BT-Scanning | `opkg install -d mmc bluez-utils` |
+
+### Mudi V2 (GL-E750V2) — nur für Modi 5+6
+
+| Komponente | Details |
+|------------|---------|
+| Hardware | GL-E750V2 mit EM050-G LTE-Modem |
+| GPS | u-blox M8130 USB-Dongle → `/dev/ttyACM0` @ 4800 baud |
+| Python | `opkg install python3 python3-pyserial` |
+| Blue Merle | Installiert unter `/mnt/disk/upper/lib/blue-merle` (overlay FS) |
+| raypager Scripts | Deployed nach `/root/raypager/python/` |
+| SSH-Key | Pager-Key in Mudi `/etc/dropbear/authorized_keys` eingetragen |
+| API-Keys | OpenCelliD-Key in `config.json` auf Mudi |
+
+**Blue Merle Symlink** (einmalig, dann persistent via rc.local):
+
+```bash
+# Symlink setzen
+ln -sf /mnt/disk/upper/lib/blue-merle /lib/blue-merle
+
+# Persistent machen (in /etc/rc.local vor exit 0 eintragen):
+ln -sf /mnt/disk/upper/lib/blue-merle /lib/blue-merle 2>/dev/null
+```
+
+**SSH vom Pager zum Mudi** (Pager wählt Mudi via wlan0cli / 192.168.8.1):
+
+```bash
+# Key generieren (auf Pager)
+ssh-keygen -t rsa -f /root/.ssh/mudi_key -N ""
+
+# Public Key auf Mudi eintragen
+cat /root/.ssh/mudi_key.pub | ssh root@192.168.8.1 \
+  'cat >> /etc/dropbear/authorized_keys'
+```
+
+---
+
 ## Deploy auf den Pager
 
 ```bash
