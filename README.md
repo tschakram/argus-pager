@@ -74,18 +74,16 @@ WiGLE und OpenCelliD erfordern eine kostenlose Registrierung.
 
 ---
 
-### Offline-Datenbanken (im Repo enthalten)
+### Lookup-Datenbanken
 
-Alle Lookup-Listen sind **lokal im Submodul** enthalten — es wird **kein Online-Zugriff** für die Analyse benötigt:
+| Datenbank | Quelle | Verhalten |
+|-----------|--------|-----------|
+| MAC-Hersteller (OUI) | IEEE (`standards-oui.ieee.org`) | Beim ersten Scan heruntergeladen, danach lokal gecacht (`/root/loot/*/oui_cache.json`), wöchentliches Auto-Update |
+| WiFi Kamera-SSIDs / Kamera-OUIs | Hardcoded in `cyt/python/hotel_scan.py` | Kein Online-Zugriff nötig |
+| BT Service UUIDs, Kamera/Mikrofon-Fingerprints | Hardcoded in `cyt/python/bt_fingerprint.py` | Kein Online-Zugriff nötig |
+| Eigene Ignore-Listen (MACs, SSIDs) | `ignore_lists/*.json` auf dem Pager | Gitignored — nur `*.example.json` im Repo |
 
-| Datei (in `cyt/`) | Inhalt |
-|-------------------|--------|
-| `data/oui.txt` o.ä. | MAC-Hersteller-Lookup (IEEE OUI) |
-| `data/spy_camera_macs.json` | Bekannte WiFi-Spy-Kamera MAC-Präfixe |
-| `data/spy_camera_bt.json` | Bekannte BT-Adressen/UUIDs (Kameras, Mikrofone, IoT) |
-| `ignore_lists/*.example.json` | Vorlagen für eigene MAC/SSID-Ignore-Listen |
-
-Die echten `ignore_lists/*.json` (eigene Geräte, bekannte Netze) werden **nicht** committet — sie liegen gitignored auf dem Pager unter `/root/loot/argus/ignore_lists/`.
+Der erste Scan benötigt eine Internetverbindung für den OUI-Cache-Download. Danach funktioniert die Kamera- und BT-Analyse vollständig offline.
 
 ---
 
