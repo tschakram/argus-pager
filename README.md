@@ -81,9 +81,19 @@ WiGLE und OpenCelliD erfordern eine kostenlose Registrierung.
 | MAC-Hersteller (OUI) | IEEE (`standards-oui.ieee.org`) | Beim ersten Scan heruntergeladen, danach lokal gecacht (`/root/loot/*/oui_cache.json`), wöchentliches Auto-Update |
 | WiFi Kamera-SSIDs / Kamera-OUIs | Hardcoded in `cyt/python/hotel_scan.py` | Kein Online-Zugriff nötig |
 | BT Service UUIDs, Kamera/Mikrofon-Fingerprints | Hardcoded in `cyt/python/bt_fingerprint.py` | Kein Online-Zugriff nötig |
+| BT Tracker (AirTag, SmartTag, Tile, Chipolo) | Hardcoded in `cyt/python/bt_fingerprint.py` | Erkennung via Company ID, Service UUID, Appearance, Gerätename |
 | Eigene Ignore-Listen (MACs, SSIDs) | `ignore_lists/*.json` auf dem Pager | Gitignored — nur `*.example.json` im Repo |
 
-Der erste Scan benötigt eine Internetverbindung für den OUI-Cache-Download. Danach funktioniert die Kamera- und BT-Analyse vollständig offline.
+Der erste Scan benötigt eine Internetverbindung für den OUI-Cache-Download. Danach funktioniert die Kamera-, BT- und Tracker-Analyse vollständig offline.
+
+---
+
+### Daten-Beiträge (Upload)
+
+| Dienst | Upload | Verhalten |
+|--------|--------|-----------|
+| **OpenCelliD** | ✅ Automatisch | Messungen werden während Modi 5+6 in Queue (`/root/loot/raypager/upload_queue/`) gespeichert. Am Payload-Ende: Upload-Dialog erscheint wenn Queue nicht leer. |
+| **WiGLE** | ❌ Nur Lookup | WiGLE wird zum Abgleich bekannter Netze verwendet. Upload (Wardriving-Beiträge) ist nicht implementiert — dafür WiGLE Android App nutzen. |
 
 ---
 

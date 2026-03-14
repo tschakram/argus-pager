@@ -966,6 +966,43 @@ _watch_list_ui() {
     rm -f "$wl_tmp"
 }
 
+# ── Upload-UI: OpenCelliD Queue hochladen (nur Modi 5+6 mit Mudi) ────────────
+_upload_ui() {
+    [ "$MUDI_AVAILABLE" != true ] && return
+
+    # Anzahl ausstehender Messungen auf Mudi prüfen
+    local queue_count
+    queue_count=$(mudi "ls /root/loot/raypager/upload_queue/*.csv 2>/dev/null | wc -l" 2>/dev/null | tr -d '[:space:]')
+    [ -z "$queue_count" ] || [ "$queue_count" -eq 0 ] 2>/dev/null && return
+
+    LOG ""
+    LOG blue "━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    LOG blue "   Daten-Upload"
+    LOG blue "━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    LOG "📡 OpenCelliD: ${queue_count} Messung(en) in Queue"
+    LOG "   (Beiträgt zur öffentlichen Mobilfunk-DB)"
+
+    CONFIRMATION_DIALOG "OpenCelliD hochladen?" "${queue_count} Messung(en) senden"
+    if [ $? -eq 0 ]; then
+        local spid
+        spid=$(spin_start "OpenCelliD Upload...")
+        local up_out
+        up_out=$(mudi_py "opencellid.py" "--upload" 2>/dev/null)
+        local up_rc=$?
+        spin_stop "$spid"
+
+        local uploaded failed
+        uploaded=$(echo "$up_out" | grep -o 'uploaded=[0-9]*' | cut -d= -f2)
+        failed=$(echo "$up_out" | grep -o 'failed=[0-9]*' | cut -d= -f2)
+
+        if [ "$up_rc" -eq 0 ] && [ "${uploaded:-0}" -gt 0 ]; then
+            LOG green "✓ OpenCelliD: ${uploaded} hochgeladen${failed:+, ${failed} fehlgeschlagen}"
+        else
+            LOG yellow "⚠ OpenCelliD Upload: ${up_out:-Fehler}"
+        fi
+    fi
+}
+
 # ── IMEI-Change via Blue Merle (OPSEC-Abschluss) ─────────────────────────────
 _imei_change_ui() {
     CONFIRMATION_DIALOG "IMEI Change anwenden?" "IMEI randomisieren + Reboot"
@@ -1115,6 +1152,7 @@ else
     esac
 fi
 
+_upload_ui
 _imei_change_ui
 
 LED $LED_OFF
