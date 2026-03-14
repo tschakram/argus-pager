@@ -976,7 +976,14 @@ _imei_change_ui() {
         return
     fi
 
+    # Modem offline nehmen (verhindert Provider-Disconnect während Rotation)
     local spid
+    spid=$(spin_start "Modem offline nehmen...")
+    mudi_py "blue_merle.py" "radio" "off" 2>/dev/null
+    spin_stop "$spid"
+    LOG "📡 Modem offline"
+    sleep 2
+
     spid=$(spin_start "Blue Merle — IMEI Rotate...")
     local bm_out
     bm_out=$(mudi_py "blue_merle.py" "rotate" 2>/dev/null)
