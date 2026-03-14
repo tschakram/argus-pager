@@ -966,6 +966,36 @@ _watch_list_ui() {
     rm -f "$wl_tmp"
 }
 
+# ── IMEI-Change via Blue Merle (OPSEC-Abschluss) ─────────────────────────────
+_imei_change_ui() {
+    CONFIRMATION_DIALOG "IMEI Change anwenden?" "IMEI randomisieren + Reboot"
+    [ $? -ne 0 ] && return
+
+    if ! check_mudi; then
+        LOG red "✗ Mudi nicht erreichbar — IMEI Change abgebrochen"
+        return
+    fi
+
+    local spid
+    spid=$(spin_start "Blue Merle — IMEI Randomize...")
+    mudi_py "blue_merle.py" "randomize" >/dev/null 2>&1
+    local rc=$?
+    spin_stop "$spid"
+
+    if [ "$rc" -eq 0 ]; then
+        LOG green "✓ IMEI randomisiert"
+        LOG "   Mudi bootet neu..."
+        sleep 2
+        LOG ""
+        LOG "Pager reboot in 3s..."
+        LED $LED_RED
+        sleep 3
+        reboot
+    else
+        LOG red "✗ Blue Merle fehlgeschlagen"
+    fi
+}
+
 # ═════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1073,6 +1103,8 @@ else
             ;;
     esac
 fi
+
+_imei_change_ui
 
 LED $LED_OFF
 exit 0
