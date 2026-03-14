@@ -196,11 +196,15 @@ PCAP_FILES=()
 BT_SCAN_FILES=()
 SCAN_START_TIME=0
 TCPDUMP_5G_PID=""
+MUDI_ROUND_GPS_PID=""
+MUDI_ROUND_CELL_PID=""
 
 _scan_cleanup() {
     PINEAPPLE_HOPPING_STOP 2>/dev/null
     WIFI_PCAP_STOP 2>/dev/null
-    [ -n "$TCPDUMP_5G_PID" ] && kill "$TCPDUMP_5G_PID" 2>/dev/null
+    [ -n "$TCPDUMP_5G_PID" ]      && kill "$TCPDUMP_5G_PID"      2>/dev/null
+    [ -n "$MUDI_ROUND_GPS_PID" ]  && kill "$MUDI_ROUND_GPS_PID"  2>/dev/null
+    [ -n "$MUDI_ROUND_CELL_PID" ] && kill "$MUDI_ROUND_CELL_PID" 2>/dev/null
     LED $LED_OFF
 }
 
@@ -208,12 +212,15 @@ run_wifi_bt_scan() {
     local rounds="$1"
     local duration="$2"
     local use_bt="${3:-false}"
-    local use_pager_gps="${4:-false}"   # true → GPS_GET pro Runde speichern
+    local use_pager_gps="${4:-false}"   # true → GPS_GET pro Runde (Pager-intern)
+    local use_mudi="${5:-false}"        # true → GPS+Cell pro Runde via Mudi (Modi 5+6)
 
     PCAP_FILES=()
     BT_SCAN_FILES=()
     SCAN_START_TIME=$(date +%s)
     TCPDUMP_5G_PID=""
+    MUDI_ROUND_GPS_PID=""
+    MUDI_ROUND_CELL_PID=""
 
     trap _scan_cleanup EXIT INT TERM
 
@@ -270,6 +277,19 @@ run_wifi_bt_scan() {
         else
             LOG "🔍 WiFi Capture läuft..."
         fi
+
+        # Mudi GPS+Cell parallel (Modi 5+6) — laufen während des Captures
+        local MUDI_GPS_TMP="" MUDI_CELL_TMP=""
+        if [ "$use_mudi" = true ] && [ "$MUDI_AVAILABLE" = true ]; then
+            MUDI_GPS_TMP="/tmp/argus_gps_${ROUND}_$$"
+            MUDI_CELL_TMP="/tmp/argus_cell_${ROUND}_$$"
+            local gps_to=$(( duration > 18 ? duration - 10 : 8 ))
+            mudi_py "gps.py" "--timeout" "$gps_to" > "$MUDI_GPS_TMP" 2>/dev/null &
+            MUDI_ROUND_GPS_PID=$!
+            mudi_py "cell_info.py" > "$MUDI_CELL_TMP" 2>/dev/null &
+            MUDI_ROUND_CELL_PID=$!
+            LOG "📡 Mudi GPS+Cell parallel gestartet (${gps_to}s Timeout)"
+        fi
         LOG "   Dauer: ${duration}s"
 
         # Countdown
@@ -294,6 +314,31 @@ run_wifi_bt_scan() {
             local bt_cnt
             bt_cnt=$(python3 -c "import json; d=json.load(open('$BT_FILE')); print(len(d.get('bt_devices',{})))" 2>/dev/null || echo '?')
             LOG green "✓ BT: $bt_cnt Geräte"
+        fi
+
+        # Mudi GPS+Cell einsammeln
+        if [ -n "$MUDI_ROUND_GPS_PID" ]; then
+            wait "$MUDI_ROUND_GPS_PID" 2>/dev/null
+            MUDI_ROUND_GPS_PID=""
+            local gps_fix
+            gps_fix=$(cat "$MUDI_GPS_TMP" 2>/dev/null)
+            rm -f "$MUDI_GPS_TMP"
+            if [ -n "$gps_fix" ]; then
+                GPS_LAT=$(echo "$gps_fix" | cut -d' ' -f1)
+                GPS_LON=$(echo "$gps_fix" | cut -d' ' -f2)
+                echo "$TS,$GPS_LAT,$GPS_LON," >> "$LOOT_DIR/gps_track.csv"
+                LOG green "✓ GPS R${ROUND}: $GPS_LAT, $GPS_LON"
+            else
+                LOG yellow "⚠ Kein GPS-Fix (R${ROUND})"
+            fi
+        fi
+        if [ -n "$MUDI_ROUND_CELL_PID" ]; then
+            wait "$MUDI_ROUND_CELL_PID" 2>/dev/null
+            MUDI_ROUND_CELL_PID=""
+            local cell_r
+            cell_r=$(cat "$MUDI_CELL_TMP" 2>/dev/null)
+            rm -f "$MUDI_CELL_TMP"
+            [ -n "$cell_r" ] && CELL_JSON="$cell_r"
         fi
 
         sleep 5     # WIFI_PCAP_STOP flush abwarten
@@ -469,6 +514,23 @@ do_cell_scan() {
     spin_stop "$spid"
     LOG "📡 Cell-Threat: $(threat_label $CELL_THREAT)"
     return 0
+}
+
+# ── OpenCelliD-Check nach per-Runden-Scan (Modi 5+6) ─────────────────────────
+# Setzt CELL_THREAT; braucht CELL_JSON gesetzt (durch run_wifi_bt_scan)
+do_opencellid() {
+    [ -z "$CELL_JSON" ] && return 1
+    local spid
+    spid=$(spin_start "OpenCelliD Check...")
+    if [ -n "$GPS_LAT" ]; then
+        mudi_py "opencellid.py" "$GPS_LAT" "$GPS_LON" "--queue" >/dev/null 2>/dev/null
+    else
+        mudi_py "opencellid.py" >/dev/null 2>/dev/null
+    fi
+    CELL_THREAT=$?
+    mudi_py "cyt_export.py" "scan" "$GPS_LAT" "$GPS_LON" >/dev/null 2>&1
+    spin_stop "$spid"
+    LOG "📡 Cell-Threat: $(threat_label $CELL_THREAT)"
 }
 
 # ── Mudi-Verbindung prüfen und MUDI_AVAILABLE setzen ─────────────────────────
@@ -660,17 +722,13 @@ run_mode_argus() {
     LOG "Starte in 5s... ROT = Abbruch"
     sleep 5
 
-    # Cell-Scan VOR WiFi-Scan (parallel initiieren)
     CELL_JSON=""; CELL_THREAT=0
-    if [ "$MUDI_AVAILABLE" = true ]; then
-        LOG ""
-        LOG blue "━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        LOG blue "   Cell-Scan"
-        LOG blue "━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        do_cell_scan
-    fi
 
-    run_wifi_bt_scan "$rounds" "$duration" true false
+    # WiFi+BT+Mudi GPS+Cell parallel pro Runde
+    run_wifi_bt_scan "$rounds" "$duration" true false true
+
+    # OpenCelliD-Check mit letztem GPS+Cell-Snapshot
+    [ "$MUDI_AVAILABLE" = true ] && [ -n "$CELL_JSON" ] && do_opencellid
 
     LED amber solid
     LOG ""
@@ -686,7 +744,7 @@ run_mode_argus() {
     local argus_cyt_report="$LATEST_REPORT"
     local argus_cyt_rc="$ANALYSIS_RC"
 
-    # Cell+GPS in Report schreiben (Fix B)
+    # Cell+GPS in Report schreiben
     [ "$MUDI_AVAILABLE" = true ] && [ -n "$CELL_JSON" ] && \
         append_cell_to_report "$argus_cyt_report"
 
@@ -757,17 +815,13 @@ run_mode_hotel2() {
     LOG "Starte in 5s... ROT = Abbruch"
     sleep 5
 
-    # Cell-Scan vor dem WiFi-Scan
     CELL_JSON=""; CELL_THREAT=0
-    if [ "$MUDI_AVAILABLE" = true ]; then
-        LOG ""
-        LOG blue "━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        LOG blue "   Cell-Scan"
-        LOG blue "━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        do_cell_scan
-    fi
 
-    run_wifi_bt_scan "$rounds" "$duration" true false
+    # WiFi+BT+Mudi GPS+Cell parallel pro Runde
+    run_wifi_bt_scan "$rounds" "$duration" true false true
+
+    # OpenCelliD-Check mit letztem GPS+Cell-Snapshot
+    [ "$MUDI_AVAILABLE" = true ] && [ -n "$CELL_JSON" ] && do_opencellid
 
     LED amber solid
     LOG ""
