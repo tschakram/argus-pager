@@ -1,0 +1,73 @@
+{
+  "_comment":  "Argus Pager — Unified Config (CYT + Raypager)",
+  "_comment2": "ACHTUNG: Echte GPS-Koordinaten, API-Keys und MACs NUR in config.json auf dem Pager!",
+  "_comment3": "config.json ist gitignored und NIEMALS in git einchecken.",
+
+  "paths": {
+    "base_dir":   "/root/loot/argus",
+    "log_dir":    "/root/loot/argus/logs",
+    "ignore_lists": {
+      "mac":  "/root/loot/argus/ignore_lists/mac_list.json",
+      "ssid": "/root/loot/argus/ignore_lists/ssid_list.json"
+    }
+  },
+
+  "timing": {
+    "check_interval": 60,
+    "list_update_interval": 5,
+    "time_windows": {
+      "recent": 5,
+      "medium": 10,
+      "old":    15,
+      "oldest": 20
+    }
+  },
+
+  "search": {
+    "_comment": "GPS-Suchbereich für WiGLE (Standard: global)",
+    "lat_min": -90.0,  "lat_max": 90.0,
+    "lon_min": -180.0, "lon_max": 180.0
+  },
+
+  "wigle": {
+    "_comment": "WiGLE API-Zugangsdaten — NICHT in Git einchecken!",
+    "enabled":   false,
+    "api_name":  "",
+    "api_token": ""
+  },
+
+  "surveillance": {
+    "persistence_threshold": 0.6,
+    "min_appearances":       3,
+    "stalking_min_persistence": 0.8
+  },
+
+  "watch_list": {
+    "_comment":  "Bekannte Zonen für static Watch-List Einträge.",
+    "_comment2": "Echte GPS-Koordinaten NUR auf dem Pager in config.json — NIEMALS ins Git!",
+    "default_zone_radius_m": 100,
+    "known_zones": [
+      {
+        "name":     "Zuhause",
+        "lat":      0.000000,
+        "lon":      0.000000,
+        "radius_m": 150
+      },
+      {
+        "name":     "Büro",
+        "lat":      0.000000,
+        "lon":      0.000000,
+        "radius_m": 100
+      }
+    ]
+  },
+
+  "_comment_mudi": "Raypager/Mudi-Verbindung (Modus 5+6)",
+  "mudi_host":   "192.168.8.1",
+  "mudi_user":   "root",
+  "mudi_key":    "/root/.ssh/mudi_key",
+  "mudi_python": "/root/raypager/python",
+
+  "_comment_cell": "OpenCelliD API-Key — NICHT in Git einchecken!",
+  "opencellid_key": "YOUR_OPENCELLID_API_KEY"
+}

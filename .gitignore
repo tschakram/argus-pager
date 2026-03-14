@@ -1,0 +1,45 @@
+# ═══════════════════════════════════════════════════════════════
+# OPSEC: Dateien die NIEMALS ins Repo dürfen
+# Alle Pfade relativ zum Repo-Root
+# ═══════════════════════════════════════════════════════════════
+
+# ── Konfiguration (API-Keys, GPS-Koordinaten, SSH-Keys) ────────
+config.json
+
+# ── Persönliche Geräte-Listen (echte MACs + SSIDs) ────────────
+ignore_lists/mac_list.json
+ignore_lists/ssid_list.json
+
+# ── Beobachtungsdaten (GPS, MACs, Verdächtige) ────────────────
+watch_list.json
+suspects_db.json
+gps_track.csv
+
+# ── Loot / Scan-Ergebnisse ────────────────────────────────────
+loot/
+*.kismet
+*.pcap
+*.pcapng
+bt_scan_*.json
+bt_*.json
+
+# ── OpenCelliD Upload-Queue ───────────────────────────────────
+upload_queue.json
+
+# ── Logs ──────────────────────────────────────────────────────
+*.log
+
+# ── Cache-Dateien ─────────────────────────────────────────────
+oui_cache.json
+wigle_cache.json
+
+# ── Python Cache ──────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# ── Sonstiges ─────────────────────────────────────────────────
+*.bak
+*.tmp
+nul
