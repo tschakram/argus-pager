@@ -397,6 +397,38 @@ do_hotel_analysis() {
         LATEST_REPORT=$(ls "$REPORT_DIR"/hotel_scan_*.md 2>/dev/null | sort | tail -1)
 }
 
+# ── Cell+GPS-Block an Report-Datei anhängen (Fix B) ───────────────────────────
+append_cell_to_report() {
+    local report="$1"
+    [ -z "$report" ] || [ ! -f "$report" ] && return
+    local rat mcc mnc cid rsrp thr_lbl gps_line ts
+    rat=$(jget    "$CELL_JSON" rat     LTE)
+    mcc=$(jget    "$CELL_JSON" mcc     -)
+    mnc=$(jget    "$CELL_JSON" mnc     -)
+    cid=$(jget    "$CELL_JSON" cell_id -)
+    rsrp=$(jget   "$CELL_JSON" rsrp   -)
+    thr_lbl=$(threat_label "${CELL_THREAT:-0}")
+    gps_line="kein GPS"
+    [ -n "$GPS_LAT" ] && gps_line="$(printf '%.6f' "$GPS_LAT"), $(printf '%.6f' "$GPS_LON")"
+    ts=$(date '+%Y-%m-%d %H:%M:%S')
+    cat >> "$report" <<CELLBLOCK
+
+---
+
+## Cell-Scan (Mudi V2) — $ts
+
+| Feld | Wert |
+|------|------|
+| Threat | **$thr_lbl** |
+| RAT | $rat |
+| MCC/MNC | $mcc/$mnc |
+| Cell-ID | $cid |
+| RSRP | ${rsrp} dBm |
+| GPS | $gps_line |
+| Zone | ${CURRENT_ZONE:-Mobil} |
+CELLBLOCK
+}
+
 # ── Cell-Scan via Mudi (Modi 5, 6) ────────────────────────────────────────────
 # Setzt CELL_JSON, CELL_THREAT
 CELL_JSON=""
@@ -407,7 +439,12 @@ do_cell_scan() {
     local spid
     spid=$(spin_start "Cell-Scan via Mudi...")
 
-    get_mudi_gps && LOG green "✓ GPS: $GPS_LAT, $GPS_LON" || LOG yellow "⚠ Kein Mudi-GPS"
+    # GPS nur holen wenn noch nicht gesetzt (Fix A: kein Doppel-SSH)
+    if [ -z "$GPS_LAT" ]; then
+        get_mudi_gps && LOG green "✓ GPS: $GPS_LAT, $GPS_LON" || LOG yellow "⚠ Kein Mudi-GPS"
+    else
+        LOG green "✓ GPS: $GPS_LAT, $GPS_LON (bereits gesetzt)"
+    fi
 
     CELL_JSON=$(mudi_py "cell_info.py" 2>/dev/null)
     if [ -z "$CELL_JSON" ]; then
@@ -649,6 +686,10 @@ run_mode_argus() {
     local argus_cyt_report="$LATEST_REPORT"
     local argus_cyt_rc="$ANALYSIS_RC"
 
+    # Cell+GPS in Report schreiben (Fix B)
+    [ "$MUDI_AVAILABLE" = true ] && [ -n "$CELL_JSON" ] && \
+        append_cell_to_report "$argus_cyt_report"
+
     # ── Ergebnis ──────────────────────────────────────────────
     LOG blue "━━━━━━━━━━━━━━━━━━━━━━━━━━"
     LOG blue "   WiFi / BT"
@@ -738,6 +779,10 @@ run_mode_hotel2() {
     do_hotel_analysis "$pcap_list" "$bt_first"
     local hotel2_rpt="$LATEST_REPORT"
     local hotel2_rc="$ANALYSIS_RC"
+
+    # Cell+GPS in Report schreiben (Fix B)
+    [ "$MUDI_AVAILABLE" = true ] && [ -n "$CELL_JSON" ] && \
+        append_cell_to_report "$hotel2_rpt"
 
     # ── Ergebnis ──────────────────────────────────────────────
     LOG blue "━━━━━━━━━━━━━━━━━━━━━━━━━━"
