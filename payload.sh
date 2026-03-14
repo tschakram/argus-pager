@@ -132,6 +132,15 @@ _zone_picker() {
         | grep "^ZONE:" | grep -v "^ZONE:Aktueller GPS" | cut -d: -f2- > "$ztmp"
     printf 'Mobil-Modus\n' >> "$ztmp"
 
+    # Nur Mobil-Modus vorhanden → direkt zurückgeben, kein Picker
+    local zone_count
+    zone_count=$(wc -l < "$ztmp")
+    if [ "$zone_count" -le 1 ]; then
+        rm -f "$ztmp"
+        echo "Mobil-Modus"
+        return
+    fi
+
     local label="" zi=1 zname
     while IFS= read -r zname; do
         local short
@@ -1005,8 +1014,17 @@ _upload_ui() {
 
 # ── IMEI-Change via Blue Merle (OPSEC-Abschluss) ─────────────────────────────
 _imei_change_ui() {
-    CONFIRMATION_DIALOG "IMEI Change anwenden?" "IMEI randomisieren + Reboot"
+    LOG ""
+    LOG blue "━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    LOG yellow "⚠  OPSEC: IMEI Rotation"
+    LOG blue "━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    VIBRATE 3
+    sleep 3
+
+    local imei_pick
+    imei_pick=$(NUMBER_PICKER "1=Kein IMEI Change 2=IMEI Change:" 1)
     [ $? -ne 0 ] && return
+    [ "$imei_pick" -ne 2 ] 2>/dev/null && return
 
     if ! check_mudi; then
         LOG red "✗ Mudi nicht erreichbar — IMEI Change abgebrochen"
@@ -1032,13 +1050,8 @@ _imei_change_ui() {
 
     if [ "$rc" -eq 0 ]; then
         LOG green "✓ IMEI rotiert: ${imei_new:-?}"
-        LOG "   Mudi bootet neu..."
-        sleep 2
-        LOG ""
-        LOG "Pager reboot in 3s..."
-        LED $LED_RED
-        sleep 3
-        reboot
+        LOG "   Mudi bootet neu — bitte warten"
+        VIBRATE 3
     else
         LOG red "✗ Blue Merle fehlgeschlagen"
     fi
