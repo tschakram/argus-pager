@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# Argus Pager v1.0 — Counter-Surveillance & IMSI-Catcher Detection
+# Argus Pager v1.1 — Counter-Surveillance & IMSI-Catcher Detection
 # WiFi Pineapple Pager DuckyScript payload
 #
 # Scan-Modi:
@@ -1065,7 +1065,7 @@ PERSISTENCE_THRESHOLD=0.6
 # ── Startup-Banner ────────────────────────────────────────────────────────────
 LED cyan blink
 LOG "=============================="
-LOG "      Argus Pager v1.0"
+LOG "      Argus Pager v1.1"
 LOG "=============================="
 LOG ""
 LOG " Counter-Surveillance"
