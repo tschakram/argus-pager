@@ -61,7 +61,33 @@ Pager  →  SSH      →  Mudi V2:
 | Blue Merle | Installiert unter `/mnt/disk/upper/lib/blue-merle` (overlay FS) |
 | raypager Scripts | Deployed nach `/root/raypager/python/` |
 | SSH-Key | Pager-Key in Mudi `/etc/dropbear/authorized_keys` eingetragen |
-| API-Keys | OpenCelliD-Key in `config.json` auf Mudi |
+| API-Keys | OpenCelliD-Key + WiGLE-Keys in `config.json` auf Mudi |
+
+**API-Keys** (einzutragen in `config.json` auf dem Pager):
+
+| Key | Dienst | Zweck |
+|-----|--------|-------|
+| `wigle_api_name` + `wigle_api_token` | [WiGLE.net](https://wigle.net) | WiFi-Netz-Abgleich (bekannte SSIDs/BSSIDs) |
+| `opencellid_key` | [OpenCelliD](https://opencellid.org) | Cell-Tower-Verifikation (Modi 5+6, auf Mudi) |
+
+WiGLE und OpenCelliD erfordern eine kostenlose Registrierung.
+
+---
+
+### Offline-Datenbanken (im Repo enthalten)
+
+Alle Lookup-Listen sind **lokal im Submodul** enthalten — es wird **kein Online-Zugriff** für die Analyse benötigt:
+
+| Datei (in `cyt/`) | Inhalt |
+|-------------------|--------|
+| `data/oui.txt` o.ä. | MAC-Hersteller-Lookup (IEEE OUI) |
+| `data/spy_camera_macs.json` | Bekannte WiFi-Spy-Kamera MAC-Präfixe |
+| `data/spy_camera_bt.json` | Bekannte BT-Adressen/UUIDs (Kameras, Mikrofone, IoT) |
+| `ignore_lists/*.example.json` | Vorlagen für eigene MAC/SSID-Ignore-Listen |
+
+Die echten `ignore_lists/*.json` (eigene Geräte, bekannte Netze) werden **nicht** committet — sie liegen gitignored auf dem Pager unter `/root/loot/argus/ignore_lists/`.
+
+---
 
 **Blue Merle Symlink** (einmalig, dann persistent via rc.local):
 
