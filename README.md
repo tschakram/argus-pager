@@ -22,6 +22,55 @@ Modi 5 und 6 benötigen den Mudi V2 (GL-E750V2) mit laufendem raypager.
 
 ---
 
+## How to Use
+
+### Schnellstart
+
+1. Pager via USB-C mit Laptop verbinden
+2. Pager-GUI öffnen: `http://172.16.52.1:1471`
+3. Payload **argus-pager** → **Start**
+4. Im Startmenü: `1 = Standard` (WiFi + BT, 2 Runden) oder `2 = Manuell` für Modusauswahl
+
+### Manueller Scan
+
+Nach Wahl `2 = Manuell`:
+
+1. **Modus wählen** (0–6, siehe Tabelle oben)
+2. **Runden** eingeben — wie oft der Scan wiederholt wird
+3. **Dauer** (Sekunden) — Länge einer Scan-Runde
+4. Scan läuft automatisch — LED blinkt blau während Capture
+5. Nach dem Scan: Ergebnis-Report wird angezeigt
+
+### Nach dem Scan
+
+- **Watch-List**: Verdächtige Geräte können direkt zur Überwachungsliste hinzugefügt werden
+- **OpenCelliD Upload**: Wenn Queue nicht leer → Dialog zum Hochladen der gesammelten Messungen (Modi 5+6)
+- **IMEI Rotation** (OPSEC): `2 = IMEI Change` wählen → Mudi rotiert IMEI und bootet neu
+
+### Ignore-Listen pflegen
+
+Eigene Geräte (Handy, Laptop, Smart-Home) in die Ignore-Listen eintragen damit sie nicht als verdächtig gemeldet werden:
+
+```bash
+# Auf dem Pager:
+vi /root/loot/argus/ignore_lists/mac_list.json
+vi /root/loot/argus/ignore_lists/ssid_list.json
+```
+
+Format: siehe `ignore_lists/mac_list.example.json` im Repo.
+
+### LED-Status
+
+| LED | Bedeutung |
+|-----|-----------|
+| Cyan blink | Startup / Initialisierung |
+| Blau blink | Scan läuft |
+| Gelb/Amber | Analyse läuft |
+| Grün | Kein Befund |
+| Rot blink | Verdacht / Alert |
+
+---
+
 ## Architektur
 
 ```
