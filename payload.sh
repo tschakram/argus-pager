@@ -972,7 +972,7 @@ _upload_ui() {
 
     # Anzahl ausstehender Messungen auf Mudi prüfen
     local queue_count
-    queue_count=$(mudi "ls /root/loot/raypager/upload_queue/*.csv 2>/dev/null | wc -l" 2>/dev/null | tr -d '[:space:]')
+    queue_count=$(mudi "ls /root/loot/raypager/upload_queue/ 2>/dev/null | wc -l" 2>/dev/null | tr -d '[:space:]')
     [ -z "$queue_count" ] || [ "$queue_count" -eq 0 ] 2>/dev/null && return
 
     LOG ""
