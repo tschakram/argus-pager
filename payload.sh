@@ -461,6 +461,11 @@ do_hotel_analysis() {
     LATEST_REPORT=$(echo "$out" | grep "REPORT_PATH:" | cut -d: -f2-)
     [ -z "$LATEST_REPORT" ] && \
         LATEST_REPORT=$(ls "$REPORT_DIR"/hotel_scan_*.md 2>/dev/null | sort | tail -1)
+
+    # Camera Activity Detection (läuft innerhalb hotel_scan.py)
+    local activity_summary
+    activity_summary=$(echo "$out" | grep "^ACTIVITY_SUMMARY:" | cut -d: -f2-)
+    [ -n "$activity_summary" ] && LOG red "🎬 $activity_summary"
 }
 
 # ── Cell+GPS-Block an Report-Datei anhängen (Fix B) ───────────────────────────
