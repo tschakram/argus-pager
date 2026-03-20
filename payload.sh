@@ -95,8 +95,9 @@ jget() {
 # ── Cell-Threat Feedback ──────────────────────────────────────────────────────
 threat_label() {
     case "$1" in
-        0) echo "CLEAN"    ;; 1) echo "UNKNOWN"  ;;
-        2) echo "MISMATCH" ;; 3) echo "GHOST"    ;; *) echo "?";;
+        0) echo "CLEAN"     ;; 1) echo "UNKNOWN"   ;;
+        2) echo "MISMATCH"  ;; 3) echo "GHOST"     ;;
+        4) echo "NOSERVICE" ;; *) echo "?"          ;;
     esac
 }
 
@@ -347,7 +348,11 @@ run_wifi_bt_scan() {
             local cell_r
             cell_r=$(cat "$MUDI_CELL_TMP" 2>/dev/null)
             rm -f "$MUDI_CELL_TMP"
-            [ -n "$cell_r" ] && CELL_JSON="$cell_r"
+            if [ -n "$cell_r" ]; then
+                CELL_JSON="$cell_r"
+                # Sofortiger Tower-Check pro Runde (OpenCelliD + WiGLE)
+                _round_cell_check "$ROUND" "$GPS_LAT" "$GPS_LON"
+            fi
         fi
 
         sleep 5     # WIFI_PCAP_STOP flush abwarten
@@ -484,9 +489,11 @@ CELLBLOCK
 }
 
 # ── Cell-Scan via Mudi (Modi 5, 6) ────────────────────────────────────────────
-# Setzt CELL_JSON, CELL_THREAT
+# Setzt CELL_JSON, CELL_THREAT, OCID_THREAT, WIGLE_THREAT
 CELL_JSON=""
 CELL_THREAT=0
+OCID_THREAT=0
+WIGLE_THREAT=0
 MUDI_AVAILABLE=false
 
 do_cell_scan() {
@@ -540,6 +547,52 @@ do_opencellid() {
     mudi_py "cyt_export.py" "scan" "$GPS_LAT" "$GPS_LON" >/dev/null 2>&1
     spin_stop "$spid"
     LOG "📡 Cell-Threat: $(threat_label $CELL_THREAT)"
+}
+
+# ── Per-Runde Tower-Check: OpenCelliD + WiGLE sofort nach Cell-Daten ─────────
+# Setzt OCID_THREAT, WIGLE_THREAT, CELL_THREAT (kombiniert)
+_round_cell_check() {
+    local round="$1" lat="${2:-}" lon="${3:-}"
+
+    LOG "🔍 R${round}: Tower-Check (OpenCelliD + WiGLE)..."
+
+    # OpenCelliD
+    if [ -n "$lat" ]; then
+        mudi_py "opencellid.py" "$lat" "$lon" "--queue" >/dev/null 2>/dev/null
+    else
+        mudi_py "opencellid.py" >/dev/null 2>/dev/null
+    fi
+    OCID_THREAT=$?
+
+    # WiGLE Cell
+    if [ -n "$lat" ]; then
+        mudi_py "wigle_cell.py" "$lat" "$lon" >/dev/null 2>/dev/null
+    else
+        mudi_py "wigle_cell.py" >/dev/null 2>/dev/null
+    fi
+    WIGLE_THREAT=$?
+
+    # Kombinierter Threat: schlechtester Wert, NOSERVICE (4) nicht eskalieren
+    CELL_THREAT=$OCID_THREAT
+    if [ "$WIGLE_THREAT" -lt 4 ] && [ "$WIGLE_THREAT" -gt "$CELL_THREAT" ]; then
+        CELL_THREAT=$WIGLE_THREAT
+    fi
+
+    local ocid_lbl wigle_lbl
+    ocid_lbl=$(threat_label "$OCID_THREAT")
+    wigle_lbl=$(threat_label "$WIGLE_THREAT")
+    LOG "📡 R${round}: OCID=$ocid_lbl  WiGLE=$wigle_lbl"
+
+    # Sofort-Feedback bei Anomalie
+    if [ "$CELL_THREAT" -ge 3 ]; then
+        LED $LED_RED
+        LOG red "🚨 R${round}: GHOST — möglicher IMSI-Catcher!"
+        VIBRATE 500
+    elif [ "$CELL_THREAT" -ge 2 ]; then
+        LED $LED_ORANGE
+        LOG yellow "⚠ R${round}: Cell-MISMATCH erkannt!"
+        VIBRATE 300; sleep 0.2; VIBRATE 300
+    fi
 }
 
 # ── Mudi-Verbindung prüfen und MUDI_AVAILABLE setzen ─────────────────────────
@@ -606,15 +659,15 @@ show_cyt_result() {
 show_cell_result_inline() {
     # Kurze Cell-Zeilen für kombinierte Reports
     local thr="$1"
-    local rat mcc mnc cid rsrp thr_lbl
+    local rat mcc mnc cid rsrp
     rat=$(jget  "$CELL_JSON" rat  LTE)
     mcc=$(jget  "$CELL_JSON" mcc  -)
     mnc=$(jget  "$CELL_JSON" mnc  -)
     cid=$(jget  "$CELL_JSON" cell_id -)
     rsrp=$(jget "$CELL_JSON" rsrp -)
-    thr_lbl=$(threat_label "$thr")
     LOG "📡 Cell: $rat $mcc/$mnc | CID:$cid | RSRP:${rsrp}dBm"
-    LOG "   Threat: $thr_lbl"
+    LOG "   OCID:  $(threat_label "${OCID_THREAT:-0}")   WiGLE: $(threat_label "${WIGLE_THREAT:-0}")"
+    LOG "   Gesamt-Threat: $(threat_label "$thr")"
     [ -n "$GPS_LAT" ] && LOG "📍 GPS: $(printf '%.4f' "$GPS_LAT"), $(printf '%.4f' "$GPS_LON")"
 }
 
