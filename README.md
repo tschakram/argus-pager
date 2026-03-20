@@ -4,6 +4,39 @@ Counter-Surveillance & IMSI-Catcher Detection für den WiFi Pineapple Pager.
 
 Umbrella-Repo das **Chasing Your Tail NG** (WiFi/BT Surveillance Detection) und **Raypager** (IMSI-Catcher Detection via Mudi V2) unter einem einheitlichen Payload zusammenführt.
 
+**Version:** v1.2 (payload.sh) / CYT v4.8 / Raypager v1.1
+
+---
+
+## Neue Features (v1.2 / v4.8)
+
+### Camera Activity Detection
+Erkennt ob verdächtige Kameras **aktiv aufzeichnen** — nicht nur ob sie existieren.
+Nach dem Hotel-Scan (Modus 4/6) analysiert `camera_activity.py` die Data-Frame-Bandbreite
+der erkannten Kamera-BSSIDs. Spikes > 200 KB/s deuten auf Video-Stream/Upload hin.
+
+### Shodan / CVEDB Integration
+- **InternetDB** (kostenlos): IP-Lookup für verdächtige Geräte mit öffentlichen IPs (Ports, Tags, CVEs)
+- **CVEDB** (kostenlos): Automatischer CVE-Lookup für erkannte Kamera-Hersteller (Hikvision, Dahua, etc.)
+- **Shodan Full API** (optional, $49): Erweiterte Host-Info (Org, ASN, Banner)
+
+### Fingerbank Device Identification
+MAC-Adresse + DHCP-Fingerprint → Gerätekategorie via Fingerbank API (kostenlos).
+Erkennt ob ein Gerät eine IP-Kamera, NVR, IoT-Device etc. ist — unabhängig vom OUI.
+
+### IP-Extraktion aus PCAPs
+Extrahiert MAC→IP-Zuordnungen und DHCP Option 55 Fingerprints direkt aus Data-Frames
+im PCAP. Ermöglicht InternetDB-Enrichment und Fingerbank-Lookup ohne zusätzliche Captures.
+
+### Weitere Verbesserungen (v1.2)
+- Config-Loading optimiert (ein Python-Call statt vier)
+- `jget()` Input-Injection Fix (stdin statt String-Interpolation)
+- Doppelter GPS-Aufruf in Modus 5/6 behoben
+- Dead Code entfernt (`do_cell_scan`, `do_opencellid`)
+- SQLite Context Manager + MAC-Case-Fix
+- fd-Leak Fix in GPS-Reader
+- Shared `utils.py` für Raypager (Threat-Level-Konstanten, Haversine)
+
 ---
 
 ## Scan-Modi
@@ -181,12 +214,39 @@ Scan-Zeit: ~12 Min.  |  Fahrzeit zwischen den Runden: ~33 Min.
 
 ```
 Argus Pager (Payload auf WiFi Pineapple Pager)
-├── cyt/          → submodule: github.com/tschakram/chasing-your-tail-pager
-│   └── python/   (analyze_pcap, bt_scanner, hotel_scan, zone_check, ...)
-└── raypager/     → submodule: github.com/tschakram/raypager
-    └── python/   (cell_info, gps, opencellid, blue_merle — laufen auf Mudi)
+├── payload.sh           Haupt-Payload (DuckyScript UI, alle Modi)
+├── config.example.json  Konfig-Vorlage (API-Keys, GPS-Zonen)
+├── cyt/                 → submodule: chasing-your-tail-pager
+│   └── python/
+│       ├── analyze_pcap.py       Probe-Request Persistence-Analyse + InternetDB
+│       ├── hotel_scan.py         Hotel-Scan: Kamera-Erkennung + CVEDB + Fingerbank
+│       ├── camera_activity.py    Data-Frame Bandbreiten-Analyse (aktive Kameras)
+│       ├── pcap_engine.py        PCAP-Parser (Probes, Beacons, Data/IPs, DHCP)
+│       ├── shodan_lookup.py      InternetDB + CVEDB + Shodan + Fingerbank APIs
+│       ├── bt_scanner.py         BLE/Classic BT Scanner (BlueZ)
+│       ├── bt_fingerprint.py     BT Device Fingerprinting (Tracker, Kameras)
+│       ├── oui_lookup.py         IEEE OUI → Hersteller
+│       ├── wigle_lookup.py       WiGLE SSID/BSSID Abgleich
+│       ├── zone_check.py         GPS/IP-basierte Standorterkennung
+│       ├── surveillance_analyzer.py  Korrelationsanalyse
+│       ├── suspects_db.py        Persistente Verdächtigen-DB
+│       └── watch_list.py         Überwachungsliste (static/dynamic)
+└── raypager/            → submodule: raypager
+    └── python/          (laufen auf Mudi V2)
+        ├── cell_info.py    AT+QENG → LTE Cell-Info
+        ├── gps.py          NMEA Reader (/dev/ttyACM0)
+        ├── opencellid.py   IMSI-Catcher Check + Upload
+        ├── blue_merle.py   IMEI Rotation
+        ├── utils.py        Shared Constants + Haversine
+        └── wigle_cell.py   WiGLE Cell-Tower Lookup
+```
 
+```
 Pager  →  wlan1mon  →  WiFi PCAP  →  CYT Analyse
+                                        ├── Probe Persistence (analyze_pcap.py)
+                                        ├── Beacon/Kamera Scan (hotel_scan.py)
+                                        ├── Activity Detection (camera_activity.py)
+                                        └── IP Enrichment (shodan_lookup.py)
 Pager  →  BlueZ    →  BT-Scan    →  BT Fingerprint
 Pager  →  SSH      →  Mudi V2:
                         ├── gps.py          (/dev/ttyACM0, u-blox M8130)
@@ -220,12 +280,17 @@ Pager  →  SSH      →  Mudi V2:
 
 **API-Keys** (einzutragen in `config.json` auf dem Pager):
 
-| Key | Dienst | Zweck |
-|-----|--------|-------|
-| `wigle_api_name` + `wigle_api_token` | [WiGLE.net](https://wigle.net) | WiFi-Netz-Abgleich (bekannte SSIDs/BSSIDs) |
-| `opencellid_key` | [OpenCelliD](https://opencellid.org) | Cell-Tower-Verifikation (Modi 5+6, auf Mudi) |
+| Key | Dienst | Zweck | Kosten |
+|-----|--------|-------|--------|
+| `wigle_api_name` + `wigle_api_token` | [WiGLE.net](https://wigle.net) | WiFi-Netz-Abgleich (bekannte SSIDs/BSSIDs) | Kostenlos |
+| `opencellid_key` | [OpenCelliD](https://opencellid.org) | Cell-Tower-Verifikation (Modi 5+6, auf Mudi) | Kostenlos |
+| `fingerbank_api_key` | [Fingerbank](https://fingerbank.org) | MAC → Gerätekategorie (IP Camera, NVR, IoT) | Kostenlos |
+| `shodan_api_key` | [Shodan](https://shodan.io) | Erweiterte IP-Host-Info (Org, ASN, Banner) | $49 einmalig (optional) |
 
-WiGLE und OpenCelliD erfordern eine kostenlose Registrierung.
+**Ohne API-Keys funktionieren:**
+- InternetDB (IP → Ports/CVEs) — kostenlos, kein Key nötig
+- CVEDB (Hersteller → CVEs) — kostenlos, kein Key nötig
+- OUI-Lookup, BT-Fingerprinting, Kamera-OUI-Erkennung — offline/hardcoded
 
 ---
 
@@ -233,13 +298,17 @@ WiGLE und OpenCelliD erfordern eine kostenlose Registrierung.
 
 | Datenbank | Quelle | Verhalten |
 |-----------|--------|-----------|
-| MAC-Hersteller (OUI) | IEEE (`standards-oui.ieee.org`) | Beim ersten Scan heruntergeladen, danach lokal gecacht (`/root/loot/*/oui_cache.json`), wöchentliches Auto-Update |
-| WiFi Kamera-SSIDs / Kamera-OUIs | Hardcoded in `cyt/python/hotel_scan.py` | Kein Online-Zugriff nötig |
-| BT Service UUIDs, Kamera/Mikrofon-Fingerprints | Hardcoded in `cyt/python/bt_fingerprint.py` | Kein Online-Zugriff nötig |
-| BT Tracker (AirTag, SmartTag, Tile, Chipolo) | Hardcoded in `cyt/python/bt_fingerprint.py` | Erkennung via Company ID, Service UUID, Appearance, Gerätename |
-| Eigene Ignore-Listen (MACs, SSIDs) | `ignore_lists/*.json` auf dem Pager | Gitignored — nur `*.example.json` im Repo |
+| MAC-Hersteller (OUI) | IEEE (`standards-oui.ieee.org`) | Beim ersten Scan heruntergeladen, danach lokal gecacht, wöchentliches Auto-Update |
+| WiFi Kamera-SSIDs / Kamera-OUIs | Hardcoded in `hotel_scan.py` | Kein Online-Zugriff nötig |
+| BT Fingerprints / Tracker | Hardcoded in `bt_fingerprint.py` | AirTag, SmartTag, Tile, Chipolo — offline |
+| InternetDB (IP → Ports/CVEs) | Shodan (`internetdb.shodan.io`) | Online, kostenlos, kein Key |
+| CVEDB (Vendor → CVEs) | Shodan (`cvedb.shodan.io`) | Online, kostenlos, kein Key |
+| Fingerbank (MAC → Gerät) | `api.fingerbank.org` | Online, Key nötig (kostenlos) |
+| Eigene Ignore-Listen | `ignore_lists/*.json` auf Pager | Gitignored — nur `*.example.json` im Repo |
 
-Der erste Scan benötigt eine Internetverbindung für den OUI-Cache-Download. Danach funktioniert die Kamera-, BT- und Tracker-Analyse vollständig offline.
+Der erste Scan benötigt eine Internetverbindung für den OUI-Cache-Download.
+Kamera-OUI-, BT- und Tracker-Analyse funktionieren vollständig offline.
+InternetDB/CVEDB/Fingerbank-Enrichment erfordert Internet, ist aber optional.
 
 ---
 

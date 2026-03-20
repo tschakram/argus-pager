@@ -68,6 +68,12 @@
   "mudi_key":    "/root/.ssh/mudi_key",
   "mudi_python": "/root/raypager/python",
 
+  "_comment_shodan": "Shodan API-Key (optional, $49 einmalig) — NICHT in Git einchecken!",
+  "shodan_api_key": "",
+
+  "_comment_fingerbank": "Fingerbank API-Key (kostenlos, fingerbank.org) — NICHT in Git einchecken!",
+  "fingerbank_api_key": "",
+
   "_comment_cell": "OpenCelliD API-Key — NICHT in Git einchecken!",
   "opencellid_key": "YOUR_OPENCELLID_API_KEY"
 }
