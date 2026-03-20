@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# Argus Pager v1.1 — Counter-Surveillance & IMSI-Catcher Detection
+# Argus Pager v1.2 — Counter-Surveillance & IMSI-Catcher Detection
 # WiFi Pineapple Pager DuckyScript payload
 #
 # Scan-Modi:
@@ -65,14 +65,19 @@ MUDI_KEY="/root/.ssh/mudi_key"
 MUDI_PY="/root/raypager/python"
 
 if command -v python3 >/dev/null 2>&1 && [ -f "$CONFIG" ]; then
-    _h=$(python3 -c "import json; d=json.load(open('$CONFIG')); print(d.get('mudi_host',''),end='')" 2>/dev/null)
-    _u=$(python3 -c "import json; d=json.load(open('$CONFIG')); print(d.get('mudi_user',''),end='')" 2>/dev/null)
-    _k=$(python3 -c "import json; d=json.load(open('$CONFIG')); print(d.get('mudi_key',''),end='')" 2>/dev/null)
-    _p=$(python3 -c "import json; d=json.load(open('$CONFIG')); print(d.get('mudi_python',''),end='')" 2>/dev/null)
-    [ -n "$_h" ] && MUDI_HOST="$_h"
-    [ -n "$_u" ] && MUDI_USER="$_u"
-    [ -n "$_k" ] && MUDI_KEY="$_k"
-    [ -n "$_p" ] && MUDI_PY="$_p"
+    eval "$(python3 -c "
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+    for k in ('mudi_host','mudi_user','mudi_key','mudi_python'):
+        v = d.get(k, '')
+        if v:
+            sh = k.upper()
+            if k == 'mudi_python': sh = 'MUDI_PY'
+            print(f'{sh}={v}')
+except Exception:
+    pass
+" "$CONFIG" 2>/dev/null)"
 fi
 
 SSH_OPTS="-i $MUDI_KEY -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o BatchMode=yes -o HostKeyAlgorithms=+ssh-rsa"
@@ -89,7 +94,8 @@ spin_stop()  { STOP_SPINNER "$1" 2>/dev/null; STOP_SPINNER 2>/dev/null; }
 # ── JSON-Field-Helper (läuft auf Pager) ───────────────────────────────────────
 jget() {
     echo "$1" | python3 -c \
-        "import json,sys; d=json.load(sys.stdin); print(d.get('$2','${3:-?}'),end='')" 2>/dev/null
+        "import json,sys; d=json.load(sys.stdin); print(d.get(sys.argv[1],sys.argv[2]),end='')" \
+        "$2" "${3:-?}" 2>/dev/null
 }
 
 # ── Cell-Threat Feedback ──────────────────────────────────────────────────────
@@ -107,6 +113,7 @@ threat_feedback() {
         1) LED $LED_YELLOW; VIBRATE 200 ;;
         2) LED $LED_ORANGE; VIBRATE 300; sleep 0.2; VIBRATE 300 ;;
         3) LED $LED_RED;    VIBRATE 500 ;;
+        4) LED $LED_BLUE ;;   # NOSERVICE — informational, kein Alarm
     esac
 }
 
@@ -488,66 +495,12 @@ append_cell_to_report() {
 CELLBLOCK
 }
 
-# ── Cell-Scan via Mudi (Modi 5, 6) ────────────────────────────────────────────
-# Setzt CELL_JSON, CELL_THREAT, OCID_THREAT, WIGLE_THREAT
+# ── Cell-State Globals ────────────────────────────────────────────────────────
 CELL_JSON=""
 CELL_THREAT=0
 OCID_THREAT=0
 WIGLE_THREAT=0
 MUDI_AVAILABLE=false
-
-do_cell_scan() {
-    local spid
-    spid=$(spin_start "Cell-Scan via Mudi...")
-
-    # GPS nur holen wenn noch nicht gesetzt (Fix A: kein Doppel-SSH)
-    if [ -z "$GPS_LAT" ]; then
-        get_mudi_gps && LOG green "✓ GPS: $GPS_LAT, $GPS_LON" || LOG yellow "⚠ Kein Mudi-GPS"
-    else
-        LOG green "✓ GPS: $GPS_LAT, $GPS_LON (bereits gesetzt)"
-    fi
-
-    CELL_JSON=$(mudi_py "cell_info.py" 2>/dev/null)
-    if [ -z "$CELL_JSON" ]; then
-        spin_stop "$spid"
-        LOG red "✗ Keine Cell-Daten (Mudi nicht erreichbar?)"
-        CELL_THREAT=1
-        return 1
-    fi
-
-    local ocid_out
-    if [ -n "$GPS_LAT" ]; then
-        ocid_out=$(mudi_py "opencellid.py" "$GPS_LAT" "$GPS_LON" "--queue" 2>/dev/null)
-        CELL_THREAT=$?
-    else
-        ocid_out=$(mudi_py "opencellid.py" 2>/dev/null)
-        CELL_THREAT=$?
-    fi
-
-    # CYT-Export für raypager-Reports
-    mudi_py "cyt_export.py" "scan" "$GPS_LAT" "$GPS_LON" >/dev/null 2>&1
-
-    spin_stop "$spid"
-    LOG "📡 Cell-Threat: $(threat_label $CELL_THREAT)"
-    return 0
-}
-
-# ── OpenCelliD-Check nach per-Runden-Scan (Modi 5+6) ─────────────────────────
-# Setzt CELL_THREAT; braucht CELL_JSON gesetzt (durch run_wifi_bt_scan)
-do_opencellid() {
-    [ -z "$CELL_JSON" ] && return 1
-    local spid
-    spid=$(spin_start "OpenCelliD Check...")
-    if [ -n "$GPS_LAT" ]; then
-        mudi_py "opencellid.py" "$GPS_LAT" "$GPS_LON" "--queue" >/dev/null 2>/dev/null
-    else
-        mudi_py "opencellid.py" >/dev/null 2>/dev/null
-    fi
-    CELL_THREAT=$?
-    mudi_py "cyt_export.py" "scan" "$GPS_LAT" "$GPS_LON" >/dev/null 2>&1
-    spin_stop "$spid"
-    LOG "📡 Cell-Threat: $(threat_label $CELL_THREAT)"
-}
 
 # ── Per-Runde Tower-Check: OpenCelliD + WiGLE sofort nach Cell-Daten ─────────
 # Setzt OCID_THREAT, WIGLE_THREAT, CELL_THREAT (kombiniert)
@@ -687,24 +640,25 @@ run_mode_cyt() {
     esac
 
     # Pager GPS prüfen
-    local pager_gps=false
+    local pager_gps=false pager_gps_lat="" pager_gps_lon=""
     if [ "$use_gps" = true ]; then
-        local graw gla
+        local graw gla glo
         graw=$(GPS_GET)
         gla=$(echo "$graw" | awk '{print $1}')
+        glo=$(echo "$graw" | awk '{print $2}')
         if [ -n "$gla" ] && [ "$gla" != "0" ]; then
             pager_gps=true
+            pager_gps_lat="$gla"
+            pager_gps_lon="$glo"
             LOG green "✓ GPS-Fix: $gla"
         else
             LOG yellow "⚠ Kein GPS-Fix (Pager)"
         fi
     fi
 
-    # Zone bestimmen
+    # Zone bestimmen (wiederverwendet gespeichertes GPS)
     if [ "$pager_gps" = true ]; then
-        local graw
-        graw=$(GPS_GET)
-        get_zone "$(echo "$graw" | awk '{print $1}')" "$(echo "$graw" | awk '{print $2}')"
+        get_zone "$pager_gps_lat" "$pager_gps_lon"
     else
         get_zone
     fi
@@ -789,8 +743,6 @@ run_mode_argus() {
     # WiFi+BT+Mudi GPS+Cell parallel pro Runde
     run_wifi_bt_scan "$rounds" "$duration" true false true
 
-    # OpenCelliD-Check mit letztem GPS+Cell-Snapshot
-    [ "$MUDI_AVAILABLE" = true ] && [ -n "$CELL_JSON" ] && do_opencellid
 
     LED amber solid
     LOG ""
@@ -882,8 +834,6 @@ run_mode_hotel2() {
     # WiFi+BT+Mudi GPS+Cell parallel pro Runde
     run_wifi_bt_scan "$rounds" "$duration" true false true
 
-    # OpenCelliD-Check mit letztem GPS+Cell-Snapshot
-    [ "$MUDI_AVAILABLE" = true ] && [ -n "$CELL_JSON" ] && do_opencellid
 
     LED amber solid
     LOG ""
@@ -1118,7 +1068,7 @@ PERSISTENCE_THRESHOLD=0.6
 # ── Startup-Banner ────────────────────────────────────────────────────────────
 LED cyan blink
 LOG "=============================="
-LOG "      Argus Pager v1.1"
+LOG "      Argus Pager v1.2"
 LOG "=============================="
 LOG ""
 LOG " Counter-Surveillance"
