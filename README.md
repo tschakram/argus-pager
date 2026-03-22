@@ -210,6 +210,71 @@ Scan-Zeit: ~12 Min.  |  Fahrzeit zwischen den Runden: ~33 Min.
 
 ---
 
+## Maßnahmen bei Tracker-Fund (SmartTag / AirTag / Tile)
+
+Wenn der Report einen **🔴 TRACKER** meldet (Samsung SmartTag, Apple AirTag, Tile etc.):
+
+### 1. Identifikation bestätigen
+
+Der Report zeigt MAC-Adresse, Hersteller und Company ID:
+```
+🔴 AA:BB:CC:DD:EE:FF — Samsung Electronics Co.,Ltd
+   🔍 TRACKER Company ID 117: Samsung (SmartTag)
+```
+
+### 2. Tracker physisch orten (RSSI-Peilung)
+
+Über SSH auf den Pager (während Payload läuft oder danach):
+
+```bash
+# Letzten BT-Scan laden und RSSI des Trackers prüfen
+python3 -c "
+import json, glob
+mac = 'AA:BB:CC:DD:EE:FF'   # Tracker-MAC aus Report
+for f in sorted(glob.glob('/root/loot/argus/bt_*.json'))[-4:]:
+    d = json.load(open(f))
+    info = d.get('bt_devices', {}).get(mac)
+    if info:
+        ts = f.split('bt_')[1].split('_r')[0]
+        rnd = f.split('_r')[1].replace('.json','')
+        print(f\"{ts} R{rnd}  RSSI={info.get('rssi','?')} dBm\")
+"
+```
+
+**RSSI-Richtwerte:**
+
+| RSSI | Entfernung (ca.) | Bedeutung |
+|------|-----------------|-----------|
+| > −60 dBm | < 2 m | Sehr nah — im selben Raum / Auto |
+| −60 bis −75 dBm | 2–10 m | Nah — gleiche Etage |
+| −75 bis −85 dBm | 10–30 m | Mittlere Distanz |
+| < −85 dBm | > 30 m | Weit entfernt / gedämpft |
+
+**Vorgehen:** Auf den Pager achten während du dich im Raum / ums Fahrzeug bewegst.
+Je stärker das RSSI (näher an 0), desto näher bist du am Tracker.
+
+> Alternativ: Für **Samsung SmartTag** die offizielle **SmartThings**-App nutzen (erfordert Samsung-Account). Für **Apple AirTag** die **Find My**-App auf iPhone (erkennt fremde AirTags automatisch und zeigt Richtung an). **Tile** und andere Tracker haben keine offizielle Such-App für Fremderkennung.
+
+### 3. Nach dem Fund
+
+- Tracker **nicht sofort entfernen** — zuerst Fotos machen und Fundort dokumentieren
+- Tracker aus dem Sichtfeld des Verfolgers entfernen, bevor du ihn abschaltest/versteckst
+- MAC zur **Watch-List** hinzufügen (Typ: Static) — so schlägt Argus sofort an wenn der Tracker wieder auftaucht
+- Bei Straftat: lokale Behörden kontaktieren (Tracking ohne Wissen ist in den meisten Ländern strafbar)
+
+### 4. Tracker-MACs ignorieren (nach Überprüfung)
+
+Wenn der Tracker als eigenes Gerät bestätigt wurde (z.B. vergessener Koffer-Tracker):
+```json
+// /root/loot/argus/ignore_lists/mac_list.json
+{
+  "ignore_macs": ["AA:BB:CC:DD:EE:FF"],
+  "comments": { "AA:BB:CC:DD:EE:FF": "Eigener Samsung SmartTag — Reisekoffer" }
+}
+```
+
+---
+
 ## Architektur
 
 ```

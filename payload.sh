@@ -39,6 +39,8 @@ export LD_LIBRARY_PATH="/mmc/usr/lib:/mmc/lib:${LD_LIBRARY_PATH:-}"
 chmod 755 "$0" 2>/dev/null
 
 PAYLOAD_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Pineapple-Framework setzt $0 auf /tmp → Fallback auf echten Pfad
+[ -d "$PAYLOAD_DIR/cyt" ] || PAYLOAD_DIR="/root/payloads/user/reconnaissance/argus-pager"
 CONFIG="$PAYLOAD_DIR/config.json"
 CYT_PY="$PAYLOAD_DIR/cyt/python"
 
@@ -357,6 +359,26 @@ run_wifi_bt_scan() {
             rm -f "$MUDI_CELL_TMP"
             if [ -n "$cell_r" ]; then
                 CELL_JSON="$cell_r"
+                # Downgrade-Alarm sofort prüfen
+                local _dg _rat _prev
+                _dg=$(jget "$CELL_JSON" downgrade_detected false)
+                _rat=$(jget "$CELL_JSON" rat LTE)
+                _prev=$(jget "$CELL_JSON" prev_rat "")
+                if [ "$_dg" = "true" ]; then
+                    LED $LED_RED
+                    LOG red "🚨 RAT-DOWNGRADE: ${_prev} → ${_rat} — möglicher IMSI-Catcher!"
+                    VIBRATE 500; sleep 0.3; VIBRATE 500
+                elif [ "$_rat" = "GSM" ]; then
+                    local _cipher
+                    _cipher=$(jget "$CELL_JSON" ciphering -1)
+                    if [ "$_cipher" = "0" ]; then
+                        LED $LED_RED
+                        LOG red "🚨 GSM A5/0 — VERBINDUNG UNVERSCHLÜSSELT!"
+                        VIBRATE 500; sleep 0.3; VIBRATE 500; sleep 0.3; VIBRATE 500
+                    else
+                        LOG yellow "⚠ GSM-Verbindung (schwache Verschlüsselung)"
+                    fi
+                fi
                 # Sofortiger Tower-Check pro Runde (OpenCelliD + WiGLE)
                 _round_cell_check "$ROUND" "$GPS_LAT" "$GPS_LON"
             fi
@@ -430,7 +452,7 @@ do_cyt_analysis() {
     local spid
     spid=$(spin_start "CYT Analyse...")
     local out
-    out=$(python3 "$CYT_PY/analyze_pcap.py" \
+    out=$(timeout 120 python3 "$CYT_PY/analyze_pcap.py" \
         --pcaps "$pcap_list" \
         --config "$CONFIG" \
         --output-dir "$REPORT_DIR" \
@@ -468,6 +490,34 @@ do_hotel_analysis() {
     [ -n "$activity_summary" ] && LOG red "🎬 $activity_summary"
 }
 
+# ── Cross-Report Persistenz-Analyse ──────────────────────────────────────────
+# Läuft nach jeder Analyse, wertet alle Reports der letzten 4h aus.
+# Setzt CROSS_REPORT (Pfad) und loggt Zusammenfassung.
+CROSS_REPORT=""
+do_cross_analysis() {
+    CROSS_REPORT="$REPORT_DIR/cross_report_latest.md"
+    local spid out summary n_crit n_total
+    spid=$(spin_start "Cross-Report...")
+    out=$(python3 "$CYT_PY/cross_report.py" \
+        --report-dir "$REPORT_DIR" \
+        --gps-track  "$LOOT_DIR/gps_track.csv" \
+        --hours      4 \
+        --min-reports 2 \
+        --min-distance 200 \
+        --output     "$CROSS_REPORT" 2>/dev/null)
+    spin_stop "$spid"
+    summary=$(echo "$out" | grep "^CROSS_SUMMARY:" | cut -d: -f2-)
+    n_crit=$(echo "$summary" | cut -d/ -f1)
+    n_total=$(echo "$summary" | cut -d/ -f2)
+    if [ -n "$n_crit" ] && [ "$n_crit" -gt 0 ] 2>/dev/null; then
+        LOG red "🚨 Cross-Report: $n_crit/${n_total} Geräte an mehreren Orten!"
+    elif [ -n "$n_total" ] && [ "$n_total" -gt 0 ] 2>/dev/null; then
+        LOG yellow "📊 Cross-Report: ${n_total} persistent, kein Ortswechsel"
+    else
+        LOG "📊 Cross-Report: kein Befund (≥2 Reports nötig)"
+    fi
+}
+
 # ── Cell+GPS-Block an Report-Datei anhängen (Fix B) ───────────────────────────
 append_cell_to_report() {
     local report="$1"
@@ -482,6 +532,17 @@ append_cell_to_report() {
     gps_line="kein GPS"
     [ -n "$GPS_LAT" ] && gps_line="$(printf '%.6f' "$GPS_LAT"), $(printf '%.6f' "$GPS_LON")"
     ts=$(date '+%Y-%m-%d %H:%M:%S')
+    local downgrade cipher downgrade_line=""
+    downgrade=$(jget "$CELL_JSON" downgrade_detected false)
+    cipher=$(jget    "$CELL_JSON" ciphering_label     "")
+    local prev_rat_val
+    prev_rat_val=$(jget "$CELL_JSON" prev_rat "")
+    if [ "$downgrade" = "true" ]; then
+        downgrade_line="| ⚠️ DOWNGRADE | **${prev_rat_val} → ${rat}** |"
+    fi
+    local cipher_line=""
+    [ "$rat" = "GSM" ] && [ -n "$cipher" ] && cipher_line="| Ciphering | ${cipher} |"
+
     cat >> "$report" <<CELLBLOCK
 
 ---
@@ -498,6 +559,8 @@ append_cell_to_report() {
 | GPS | $gps_line |
 | Zone | ${CURRENT_ZONE:-Mobil} |
 CELLBLOCK
+    [ -n "$downgrade_line" ] && echo "$downgrade_line" >> "$report"
+    [ -n "$cipher_line"    ] && echo "$cipher_line"    >> "$report"
 }
 
 # ── Cell-State Globals ────────────────────────────────────────────────────────
@@ -581,7 +644,7 @@ show_cyt_result() {
         bcam=$(grep "BLE Kamera/IoT-Verdächtige:" "$report" | grep -o '[0-9]*' | head -1)
         susp=$(( ${wcam:-0} + ${bcam:-0} ))
         LOG "📷 WiFi Kameras: ${wcam:-0}  📡 BLE: ${bcam:-0}"
-        if [ "$rc" -eq 2 ] || [ "${susp:-0}" -gt 0 ]; then
+        if [ "${susp:-0}" -gt 0 ]; then
             LED red blink
             LOG red "🚨 KAMERA VERDACHT!"
             LOG red "   Raum gründlich prüfen!"
@@ -594,11 +657,13 @@ show_cyt_result() {
             LOG green "✅ Keine Kameras erkannt — Raum unauffällig"
         fi
     else
-        local total susp
+        local total susp bt_susp
         total=$(grep "Geräte gesamt" "$report" | grep -o '[0-9]*' | head -1)
-        susp=$(grep "Verdächtig" "$report" | grep -o '[0-9]*' | head -1)
-        LOG "📊 Geräte: ${total:-0}   🔍 Verdächtig: ${susp:-0}"
-        if [ "$rc" -eq 2 ] || [ "${susp:-0}" -gt 0 ]; then
+        susp=$(grep "^\*\*Verdächtig:\*\*" "$report" | grep -o '[0-9]*' | head -1)
+        bt_susp=$(grep -c "^### 🔴" "$report" 2>/dev/null || echo 0)
+        susp=$(( ${susp:-0} + ${bt_susp:-0} ))
+        LOG "📊 WiFi: ${total:-0}   🔵 BT: ${bt_susp:-0}   🔍 Verdächtig: ${susp:-0}"
+        if [ "${susp:-0}" -gt 0 ]; then
             LED red blink
             LOG red "⚠ WARNUNG: Verdächtige Geräte!"
             grep "🔴\|⚠" "$report" 2>/dev/null | head -8 | while IFS= read -r line; do
@@ -683,6 +748,7 @@ run_mode_cyt() {
     pcap_list=$(_pcap_list)
     bt_list=$(_bt_list)
     do_cyt_analysis "$pcap_list" "$bt_list" "$min_apps"
+    do_cross_analysis
 
     LOG blue "━━━━━━━━━━━━━━━━━━━━━━━━━━"
     LOG blue "       ERGEBNIS"
@@ -713,6 +779,7 @@ run_mode_hotel() {
     bt_list=$(_bt_list)
     bt_first=$(echo "$bt_list" | cut -d',' -f1)
     do_hotel_analysis "$pcap_list" "$bt_first"
+    do_cross_analysis
 
     LOG blue "━━━━━━━━━━━━━━━━━━━━━━━━━━"
     LOG blue "     HOTEL ERGEBNIS"
@@ -760,6 +827,7 @@ run_mode_argus() {
     [ "$min_apps" -gt 15 ] && min_apps=15
 
     do_cyt_analysis "$pcap_list" "$bt_list" "$min_apps"
+    do_cross_analysis
     local argus_cyt_report="$LATEST_REPORT"
     local argus_cyt_rc="$ANALYSIS_RC"
 
@@ -848,6 +916,7 @@ run_mode_hotel2() {
     bt_first=$(echo "$bt_list" | cut -d',' -f1)
 
     do_hotel_analysis "$pcap_list" "$bt_first"
+    do_cross_analysis
     local hotel2_rpt="$LATEST_REPORT"
     local hotel2_rc="$ANALYSIS_RC"
 
@@ -999,8 +1068,9 @@ _upload_ui() {
     LOG "📡 OpenCelliD: ${queue_count} Messung(en) in Queue"
     LOG "   (Beiträgt zur öffentlichen Mobilfunk-DB)"
 
-    CONFIRMATION_DIALOG "OpenCelliD hochladen?" "${queue_count} Messung(en) senden"
-    if [ $? -eq 0 ]; then
+    local up_choice
+    up_choice=$(NUMBER_PICKER $'OpenCelliD Upload\n1: Hochladen\n2: Überspringen' 2)
+    if [ "$up_choice" = "1" ]; then
         local spid
         spid=$(spin_start "OpenCelliD Upload...")
         local up_out
