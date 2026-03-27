@@ -487,6 +487,91 @@ SSH-Configs:
 - `ignore_lists/*.json` sind gitignored — nur `*.example.json` im Repo
 - Alle Geodaten (GPS, Zonen) bleiben ausschließlich auf dem Pager
 
+### 802.11w — Management Frame Protection (Pager ↔ Mudi)
+
+Der WiFi-Link zwischen Pager (`wlan0cli`) und Mudi V2 ist standardmäßig anfällig für **Deauthentication-Flood-Angriffe** (aireplay-ng, MDK3 etc.), die die Verbindung unterbrechen können.
+
+**802.11w (PMF)** schützt davor: Deauth/Disassoc-Frames werden kryptografisch signiert — unsignierte Flood-Frames werden vom Client ignoriert.
+
+Aktivierung (einmalig, auf beiden Geräten):
+
+```bash
+# Pager
+uci set wireless.wlan0cli.ieee80211w='2'
+uci commit wireless
+wifi reload
+
+# Mudi V2
+uci set wireless.default_radio1.ieee80211w='2'
+uci commit wireless
+wifi reload
+```
+
+Verifizierung (auf dem Pager):
+```bash
+grep ieee80211w /var/run/wpa_supplicant-wlan0cli.conf
+# → ieee80211w=2
+```
+
+> `ieee80211w=2` = **Required** — Verbindung wird nur noch mit MFP aufgebaut. Flood-Angriffe auf diese Verbindung sind damit wirkungslos.
+
+### Deauth-Flood Monitoring
+
+Der Pineapple-Firmware-Daemon erkennt Deauth/Disassoc-Floods automatisch und triggert den Alert-Payload unter:
+
+```
+/root/payloads/alert/deauth_flood_detected/example/payload.sh
+```
+
+Der Stock-Payload zeigt nur eine Display-Meldung. Für persistentes Logging sollte er wie folgt erweitert werden:
+
+```bash
+#!/bin/bash
+ALERT "$_ALERT_DENIAL_MESSAGE"
+
+LOGFILE="/root/loot/deauth_log.json"
+TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+ENTRY=$(printf '{"time":"%s","message":"%s","source":"%s","destination":"%s","ap_bssid":"%s","client":"%s"}' \
+    "$TIMESTAMP" \
+    "$_ALERT_DENIAL_MESSAGE" \
+    "$_ALERT_DENIAL_SOURCE_MAC_ADDRESS" \
+    "$_ALERT_DENIAL_DESTINATION_MAC_ADDRESS" \
+    "$_ALERT_DENIAL_AP_MAC_ADDRESS" \
+    "$_ALERT_DENIAL_CLIENT_MAC_ADDRESS")
+echo "$ENTRY" >> "$LOGFILE"
+```
+
+Jeder erkannte Angriff wird damit mit Timestamp, Source-MAC, AP-BSSID und Client-MAC in `/root/loot/deauth_log.json` gespeichert (eine JSON-Zeile pro Event).
+
+> **Verfügbare Variablen:** `$_ALERT_DENIAL_SOURCE_MAC_ADDRESS`, `$_ALERT_DENIAL_DESTINATION_MAC_ADDRESS`, `$_ALERT_DENIAL_AP_MAC_ADDRESS`, `$_ALERT_DENIAL_CLIENT_MAC_ADDRESS`, `$_ALERT_DENIAL_MESSAGE`
+
+### ⚠️ IMEI-Wechsel — Rechtslage beachten
+
+Die IMEI-Rotation (Blue Merle) ist ein OPSEC-Feature zum Schutz vor IMSI-Catchern und Bewegungsprofilen. **Die Rechtslage zum Ändern der IMEI variiert stark je nach Land:**
+
+| Land | Rechtslage |
+|------|-----------|
+| Deutschland | Nicht explizit verboten, aber Nutzung einer gefälschten IMEI in einem Mobilfunknetz kann unter §§ 263, 269 StGB fallen |
+| Österreich | Ähnlich DE — keine explizite Regelung, aber mögliche Relevanz im Telekommunikationsrecht |
+| Schweiz | Kein explizites Verbot, aber mögliche Konflikte mit Fernmelderecht |
+| UK | Illegal seit 2002 (Mobile Telephones Re-programming Act) |
+| USA | Illegal unter FCC-Richtlinien (47 USC § 333) |
+| Litauen | Keine explizite Regelung bekannt |
+
+> **Empfehlung:** Vor Nutzung der IMEI-Rotation die **Rechtslage im jeweiligen Einsatzland** prüfen. Die Verantwortung liegt beim Anwender. Dieses Tool dient der defensiven Sicherheitsforschung — der Einsatz in illegaler Weise ist nicht beabsichtigt.
+
+### WiGLE Cell-Tower-Daten — Bekannte Ungenauigkeit
+
+Bei einem Cross-Check von 51 Zellen gegen die WiGLE-Datenbank wurde festgestellt, dass **alle Lookups für einen bestimmten MCC identische, nachweislich falsche GPS-Koordinaten** zurücklieferten — mit einem Positionsfehler von über **1.400 km**. Die gemeldeten Positionen lagen in einem völlig anderen Land als die tatsächlichen Zellstandorte.
+
+**Ursache:** WiGLE basiert auf Crowdsourced-Daten (Wardriving-Uploads). Werden Zellen mit falschen GPS-Koordinaten hochgeladen, werden alle Einträge für diesen Netzbereich kontaminiert. Eine Qualitätskontrolle findet nicht statt.
+
+**Konsequenz:**
+- WiGLE Cell-Lookup ist für die Cell-Tower-Verifikation **derzeit deaktiviert** (`wigle.enabled: false`)
+- OpenCelliD bleibt die primäre Quelle für IMSI-Catcher-Erkennung
+- WiGLE wird weiterhin für **WiFi SSID/BSSID-Abgleich** genutzt (dort sind die Daten zuverlässiger)
+- Das `wigle_cell.py`-Modul gibt bei deaktiviertem WiGLE `CLEAN` zurück (kein Einfluss auf CELL_THREAT)
+
 ---
 
 ## Submodule-Repos
