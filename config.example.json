@@ -75,5 +75,10 @@
   "fingerbank_api_key": "",
 
   "_comment_cell": "OpenCelliD API-Key — NICHT in Git einchecken!",
-  "opencellid_key": "YOUR_OPENCELLID_API_KEY"
+  "opencellid_key": "YOUR_OPENCELLID_API_KEY",
+
+  "_comment_uwl": "UnwiredLabs (LocationAPI) — Zweite Cell-Tower-Quelle, kostenloser Free-Tier (100/Tag)",
+  "unwiredlabs": {
+    "token": ""
+  }
 }

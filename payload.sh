@@ -568,14 +568,15 @@ CELL_JSON=""
 CELL_THREAT=0
 OCID_THREAT=0
 WIGLE_THREAT=0
+UWL_THREAT=0
 MUDI_AVAILABLE=false
 
-# ── Per-Runde Tower-Check: OpenCelliD + WiGLE sofort nach Cell-Daten ─────────
-# Setzt OCID_THREAT, WIGLE_THREAT, CELL_THREAT (kombiniert)
+# ── Per-Runde Tower-Check: OpenCelliD + WiGLE + UnwiredLabs ─────────────────
+# Setzt OCID_THREAT, WIGLE_THREAT, UWL_THREAT, CELL_THREAT (kombiniert)
 _round_cell_check() {
     local round="$1" lat="${2:-}" lon="${3:-}"
 
-    LOG "🔍 R${round}: Tower-Check (OpenCelliD + WiGLE)..."
+    LOG "🔍 R${round}: Tower-Check (OpenCelliD + WiGLE + UWL)..."
 
     # OpenCelliD
     if [ -n "$lat" ]; then
@@ -593,16 +594,28 @@ _round_cell_check() {
     fi
     WIGLE_THREAT=$?
 
+    # UnwiredLabs
+    if [ -n "$lat" ]; then
+        mudi_py "unwiredlabs.py" "$lat" "$lon" >/dev/null 2>/dev/null
+    else
+        mudi_py "unwiredlabs.py" >/dev/null 2>/dev/null
+    fi
+    UWL_THREAT=$?
+
     # Kombinierter Threat: schlechtester Wert, NOSERVICE (4) nicht eskalieren
     CELL_THREAT=$OCID_THREAT
     if [ "$WIGLE_THREAT" -lt 4 ] && [ "$WIGLE_THREAT" -gt "$CELL_THREAT" ]; then
         CELL_THREAT=$WIGLE_THREAT
     fi
+    if [ "$UWL_THREAT" -lt 4 ] && [ "$UWL_THREAT" -gt "$CELL_THREAT" ]; then
+        CELL_THREAT=$UWL_THREAT
+    fi
 
-    local ocid_lbl wigle_lbl
+    local ocid_lbl wigle_lbl uwl_lbl
     ocid_lbl=$(threat_label "$OCID_THREAT")
     wigle_lbl=$(threat_label "$WIGLE_THREAT")
-    LOG "📡 R${round}: OCID=$ocid_lbl  WiGLE=$wigle_lbl"
+    uwl_lbl=$(threat_label "$UWL_THREAT")
+    LOG "📡 R${round}: OCID=$ocid_lbl  WiGLE=$wigle_lbl  UWL=$uwl_lbl"
 
     # Sofort-Feedback bei Anomalie
     if [ "$CELL_THREAT" -ge 3 ]; then
@@ -628,6 +641,19 @@ check_mudi_connect() {
         spin_stop "$spid"
         LOG yellow "⚠ Mudi nicht erreichbar — kein GPS/Cell"
         MUDI_AVAILABLE=false
+    fi
+}
+
+# ── GPS-Logger auf Mudi starten (falls nicht bereits läuft) ──────────────────
+ensure_gps_logger() {
+    [ "$MUDI_AVAILABLE" != true ] && return
+    local status
+    status=$(mudi "cd '$MUDI_PY' && python3 gps_logger.py --status" 2>/dev/null)
+    if echo "$status" | grep -q "RUNNING"; then
+        LOG green "GPS-Logger: läuft"
+    else
+        mudi "cd '$MUDI_PY' && python3 gps_logger.py --start" 2>/dev/null
+        LOG green "GPS-Logger: gestartet"
     fi
 }
 
@@ -689,7 +715,7 @@ show_cell_result_inline() {
     cid=$(jget  "$CELL_JSON" cell_id -)
     rsrp=$(jget "$CELL_JSON" rsrp -)
     LOG "📡 Cell: $rat $mcc/$mnc | CID:$cid | RSRP:${rsrp}dBm"
-    LOG "   OCID:  $(threat_label "${OCID_THREAT:-0}")   WiGLE: $(threat_label "${WIGLE_THREAT:-0}")"
+    LOG "   OCID:  $(threat_label "${OCID_THREAT:-0}")   WiGLE: $(threat_label "${WIGLE_THREAT:-0}")   UWL: $(threat_label "${UWL_THREAT:-0}")"
     LOG "   Gesamt-Threat: $(threat_label "$thr")"
     [ -n "$GPS_LAT" ] && LOG "📍 GPS: $(printf '%.4f' "$GPS_LAT"), $(printf '%.4f' "$GPS_LON")"
 }
@@ -798,6 +824,7 @@ run_mode_argus() {
 
     # Mudi-Check
     check_mudi_connect
+    ensure_gps_logger
     [ "$MUDI_AVAILABLE" = false ] && sleep 3
 
     # GPS für Zone (aus Mudi, falls verfügbar)
@@ -890,6 +917,7 @@ run_mode_hotel2() {
 
     # Mudi-Check
     check_mudi_connect
+    ensure_gps_logger
     [ "$MUDI_AVAILABLE" = false ] && sleep 2
 
     # GPS für Zone

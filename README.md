@@ -4,7 +4,7 @@ Counter-Surveillance & IMSI-Catcher Detection für den WiFi Pineapple Pager.
 
 Umbrella-Repo das **Chasing Your Tail NG** (WiFi/BT Surveillance Detection) und **Raypager** (IMSI-Catcher Detection via Mudi V2) unter einem einheitlichen Payload zusammenführt.
 
-**Version:** v1.2 (payload.sh) / CYT v4.8 / Raypager v1.1
+**Version:** v1.2 (payload.sh) / CYT v4.8 / Raypager v1.2
 
 ---
 
@@ -28,6 +28,24 @@ Erkennt ob ein Gerät eine IP-Kamera, NVR, IoT-Device etc. ist — unabhängig v
 Extrahiert MAC→IP-Zuordnungen und DHCP Option 55 Fingerprints direkt aus Data-Frames
 im PCAP. Ermöglicht InternetDB-Enrichment und Fingerbank-Lookup ohne zusätzliche Captures.
 
+### UnwiredLabs — Zweite Cell-Tower-Quelle
+UnwiredLabs als unabhängige zweite Quelle für Cell-Tower-Verifikation neben OpenCelliD.
+Kostenlos (100 Lookups/Tag). Kombinierter Threat-Level aus OpenCelliD + WiGLE + UnwiredLabs.
+
+### GPS-Logger (Mudi)
+Kontinuierliches GPS-Logging als Daemon auf dem Mudi (`gps_logger.py`).
+Zeichnet Position im 60-Sekunden-Intervall auf — unabhängig vom Scan-Zustand.
+Ermöglicht nachträgliche GPS-Korrelation mit BT/WiFi-Daten.
+
+### Blue Merle — IMEI Rotation
+Integrierte IMEI-Rotation über [Blue Merle](https://github.com/srlabs/blue-merle) auf dem Mudi V2.
+Schützt vor IMSI-Catcher-basierter Geräte-Identifikation und Bewegungsprofilen.
+
+- **Status-Anzeige**: Aktuelle IMEI, IMSI, Radio-Status direkt im Payload-Menü
+- **IMEI-Wechsel**: Radio off → IMEI rotieren → Mudi Reboot (automatisiert)
+- **SIM-Swap-Modus**: Radio off → SIM wechseln → Standort wechseln → Mudi neu starten
+- Unterstützt GL-E750V2 (Mudi V2) mit Quectel EM050-G Modem
+
 ### Weitere Verbesserungen (v1.2)
 - Config-Loading optimiert (ein Python-Call statt vier)
 - `jget()` Input-Injection Fix (stdin statt String-Interpolation)
@@ -36,6 +54,8 @@ im PCAP. Ermöglicht InternetDB-Enrichment und Fingerbank-Lookup ohne zusätzlic
 - SQLite Context Manager + MAC-Case-Fix
 - fd-Leak Fix in GPS-Reader
 - Shared `utils.py` für Raypager (Threat-Level-Konstanten, Haversine)
+- `cyt_export.py` GPS-Handling Fix (leere Werte crashten Report-Erstellung)
+- Permissions-Fix für Windows-SCP Deploy (`--w--w--wx` → `755`)
 
 ---
 
@@ -301,9 +321,12 @@ Argus Pager (Payload auf WiFi Pineapple Pager)
         ├── cell_info.py    AT+QENG → LTE Cell-Info
         ├── gps.py          NMEA Reader (/dev/ttyACM0)
         ├── opencellid.py   IMSI-Catcher Check + Upload
+        ├── unwiredlabs.py  UnwiredLabs Cell-Tower Lookup (2. Quelle)
         ├── blue_merle.py   IMEI Rotation
+        ├── gps_logger.py   Kontinuierliches GPS-Logging (Daemon)
+        ├── cyt_export.py   CYT-kompatible Report-Erstellung
         ├── utils.py        Shared Constants + Haversine
-        └── wigle_cell.py   WiGLE Cell-Tower Lookup
+        └── wigle_cell.py   WiGLE Cell-Tower Lookup (deaktiviert)
 ```
 
 ```
@@ -315,8 +338,10 @@ Pager  →  wlan1mon  →  WiFi PCAP  →  CYT Analyse
 Pager  →  BlueZ    →  BT-Scan    →  BT Fingerprint
 Pager  →  SSH      →  Mudi V2:
                         ├── gps.py          (/dev/ttyACM0, u-blox M8130)
+                        ├── gps_logger.py   (kontinuierliches GPS-Logging, Daemon)
                         ├── cell_info.py    (EM050-G Modem via AT)
-                        └── opencellid.py   (IMSI-Catcher-Check)
+                        ├── opencellid.py   (IMSI-Catcher-Check, primär)
+                        └── unwiredlabs.py  (Cell-Check, 2. Quelle)
 ```
 
 ---
@@ -341,14 +366,15 @@ Pager  →  SSH      →  Mudi V2:
 | Blue Merle | Installiert unter `/mnt/disk/upper/lib/blue-merle` (overlay FS) |
 | raypager Scripts | Deployed nach `/root/raypager/python/` |
 | SSH-Key | Pager-Key in Mudi `/etc/dropbear/authorized_keys` eingetragen |
-| API-Keys | OpenCelliD-Key + WiGLE-Keys in `config.json` auf Mudi |
+| API-Keys | OpenCelliD-Key + UnwiredLabs-Token + WiGLE-Keys in `config.json` auf Mudi |
 
 **API-Keys** (einzutragen in `config.json` auf dem Pager):
 
 | Key | Dienst | Zweck | Kosten |
 |-----|--------|-------|--------|
 | `wigle_api_name` + `wigle_api_token` | [WiGLE.net](https://wigle.net) | WiFi-Netz-Abgleich (bekannte SSIDs/BSSIDs) | Kostenlos |
-| `opencellid_key` | [OpenCelliD](https://opencellid.org) | Cell-Tower-Verifikation (Modi 5+6, auf Mudi) | Kostenlos |
+| `opencellid_key` | [OpenCelliD](https://opencellid.org) | Cell-Tower-Verifikation, primär (Modi 5+6, auf Mudi) | Kostenlos |
+| `unwiredlabs.token` | [UnwiredLabs](https://unwiredlabs.com) | Cell-Tower-Verifikation, 2. Quelle (Modi 5+6, auf Mudi) | Kostenlos (100/Tag) |
 | `fingerbank_api_key` | [Fingerbank](https://fingerbank.org) | MAC → Gerätekategorie (IP Camera, NVR, IoT) | Kostenlos |
 | `shodan_api_key` | [Shodan](https://shodan.io) | Erweiterte IP-Host-Info (Org, ASN, Banner) | $49 einmalig (optional) |
 
@@ -368,6 +394,9 @@ Pager  →  SSH      →  Mudi V2:
 | BT Fingerprints / Tracker | Hardcoded in `bt_fingerprint.py` | AirTag, SmartTag, Tile, Chipolo — offline |
 | InternetDB (IP → Ports/CVEs) | Shodan (`internetdb.shodan.io`) | Online, kostenlos, kein Key |
 | CVEDB (Vendor → CVEs) | Shodan (`cvedb.shodan.io`) | Online, kostenlos, kein Key |
+| OpenCelliD (Cell → Position) | `opencellid.org` | Online, Key nötig (kostenlos), 24h Cache, primäre Cell-Quelle |
+| UnwiredLabs (Cell → Position) | `unwiredlabs.com` | Online, Key nötig (kostenlos, 100/Tag), 24h Cache, 2. Cell-Quelle |
+| WiGLE Cell (Cell → Position) | `wigle.net` | Deaktiviert — kontaminierte Daten (siehe OPSEC-Abschnitt) |
 | Fingerbank (MAC → Gerät) | `api.fingerbank.org` | Online, Key nötig (kostenlos) |
 | Eigene Ignore-Listen | `ignore_lists/*.json` auf Pager | Gitignored — nur `*.example.json` im Repo |
 
@@ -382,7 +411,8 @@ InternetDB/CVEDB/Fingerbank-Enrichment erfordert Internet, ist aber optional.
 | Dienst | Upload | Verhalten |
 |--------|--------|-----------|
 | **OpenCelliD** | ✅ Automatisch | Messungen werden während Modi 5+6 in Queue (`/root/loot/raypager/upload_queue/`) gespeichert. Am Payload-Ende: Upload-Dialog erscheint wenn Queue nicht leer. |
-| **WiGLE** | ❌ Nur Lookup | WiGLE wird zum Abgleich bekannter Netze verwendet. Upload (Wardriving-Beiträge) ist nicht implementiert — dafür WiGLE Android App nutzen. |
+| **UnwiredLabs** | ❌ Nur Lookup | Zweite unabhängige Quelle für Cell-Tower-Verifikation. Kein Upload. |
+| **WiGLE** | ❌ Nur WiFi-Lookup | Cell-Tower-Lookup deaktiviert (kontaminierte Daten). WiFi-SSID/BSSID-Abgleich weiterhin aktiv. |
 
 ---
 
@@ -574,10 +604,50 @@ Bei einem Cross-Check von 51 Zellen gegen die WiGLE-Datenbank wurde festgestellt
 
 ---
 
+## Blue Merle — IMEI Rotation (Mudi V2)
+
+[Blue Merle](https://github.com/srlabs/blue-merle) ermöglicht die IMEI-Rotation auf dem GL-E750V2 Mudi V2. In Argus Pager ist Blue Merle direkt ins Payload-Menü integriert.
+
+### Funktionen
+
+| Funktion | Beschreibung |
+|----------|-------------|
+| **Status** | Zeigt aktuelle IMEI, IMSI, Netzwerk-Status, Radio-Zustand |
+| **IMEI Rotate** | Generiert neue zufällige IMEI, Mudi bootet automatisch neu |
+| **SIM Swap** | Radio off → SIM wechseln → Standort wechseln → Reboot |
+
+### Warum IMEI-Rotation?
+
+IMSI-Catcher (Stingray, Harris) identifizieren Geräte anhand ihrer **IMEI** (eindeutige Hardware-ID). Durch regelmäßiges Wechseln der IMEI:
+
+- Werden Bewegungsprofile unterbrochen
+- Kann das Gerät nicht über Sessions hinweg getrackt werden
+- Wird die Zuordnung IMEI → Person erschwert
+
+### Ablauf im Payload
+
+```
+Menü → 2 (IMEI Change)
+  ├── Radio abschalten (Netzwerk-Disconnect)
+  ├── Neue IMEI generieren (blue_merle.py rotate)
+  ├── Mudi Reboot
+  └── Warten auf Reconnect (~60s)
+```
+
+### Voraussetzungen
+
+- Blue Merle installiert: `/mnt/disk/upper/lib/blue-merle`
+- Symlink persistent (rc.local): `ln -sf /mnt/disk/upper/lib/blue-merle /lib/blue-merle`
+- Nur GL-E750V2 (Mudi V2) mit Quectel EM050-G Modem
+
+> ⚠️ **Rechtslage:** Die IMEI-Änderung ist in einigen Ländern illegal (UK, USA). Siehe OPSEC-Abschnitt für Details.
+
+---
+
 ## Submodule-Repos
 
 - [chasing-your-tail-pager](https://github.com/tschakram/chasing-your-tail-pager) — WiFi/BT Surveillance Detection
-- [raypager](https://github.com/tschakram/raypager) — IMSI-Catcher Detection
+- [raypager](https://github.com/tschakram/raypager) — IMSI-Catcher Detection & IMEI Rotation
 
 ---
 
