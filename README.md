@@ -4,7 +4,73 @@ Counter-Surveillance & IMSI-Catcher Detection für den WiFi Pineapple Pager.
 
 Umbrella-Repo das **Chasing Your Tail NG** (WiFi/BT Surveillance Detection) und **Raypager** (IMSI-Catcher Detection via Mudi V2) unter einem einheitlichen Payload zusammenführt.
 
-**Version:** v1.2 (payload.sh) / CYT v4.8 / Raypager v1.2
+**Version:** v1.3 (payload.sh) / CYT v4.9 / Raypager v1.3
+
+---
+
+## Neue Features (v1.3 / v4.9) — SnoopSnitch-inspired
+
+Inspiriert von [SRLabs SnoopSnitch](https://github.com/srlabs/snoopsnitch) wurden
+fünf neue Baseband-/SMS-Anomaliedetektoren integriert. Alle laufen **passiv im
+Hintergrund** — der IMSI-Catcher-Monitor startet in **jedem** Scan-Modus automatisch
+auf dem Mudi, sobald dieser erreichbar ist. Die Ergebnisse fließen in den
+einheitlichen CYT Cross-Report ein.
+
+### IMSI-Catcher Monitor (immer aktiv)
+`raypager/python/imsi_monitor.py` — Daemon auf dem Mudi, pollt alle 30 s serving
+cell + neighbors und schreibt Samples nach `rat_history.json`. Erkennt:
+
+| Anomalie | Detektion | Severity |
+|----------|-----------|----------|
+| **RAT-Downgrade** | LTE → WCDMA/GSM (Rangvergleich) | HIGH (GSM) / MEDIUM |
+| **Cipher plaintext** | AT+QNWCFG ciphering_ind = 0 (A5/0, EEA0) | HIGH |
+| **TA-Anomaly** | Timing Advance = 0 bei RSRP < −100 dBm (unmöglich fern) | MEDIUM |
+| **Neighbors vanished** | ≥ 3 Nachbarn → 0 (Zwangs-Lock an Fake-BTS) | HIGH |
+| **TAC-Change same CID** | Gleiche Cell-ID aber neue TAC (Cell Cloning) | HIGH |
+| **Cell-ID 0** | Gespoofter Identifier | MEDIUM |
+
+State in `/root/loot/raypager/imsi_monitor_state.json`, Alerts in
+`imsi_alerts.jsonl`, RAT-Historie in `rat_history.json` (von cross_report gelesen).
+
+### Silent-SMS Watcher (standardmäßig aktiv)
+`raypager/python/silent_sms.py` — Daemon pollt alle 60 s `AT+CMGL=4` (PDU-Modus)
+und dekodiert **TP-PID** + **TP-DCS**. Erkennt:
+
+- **Silent SMS** (TP-PID 0x40) — Ping-SMS die nie im Posteingang erscheint, zur
+  Standortpeilung durch Behörden/Catcher
+- **SIM Data Download** (TP-PID 0x7F) — OTA-Kommando direkt an die SIM (Java Applets)
+- **ME Data Download** (TP-PID 0x3E/0x3F) — OTA-Kommando ans Gerät
+- **Flash SMS** (TP-DCS class 0) — Display-only, kein Storage
+- **Binary SMS** (DCS 8-bit) — Nicht-Text-Payloads
+
+Log: `/root/loot/raypager/silent_sms.jsonl`. Abschalten via
+`config.silent_sms.watch_on_start = false`.
+
+### Self-SMS Loopback (opt-in, via Menü)
+`raypager/python/sms_loopback.py` — MO/MT-Loopback-Test: sendet SMS mit Token an
+die eigene SIM (AT+CNUM oder `test_number` aus config) und wartet auf Empfang.
+Misst **Latency** (Warnung > 30 s) und erkennt **silent interception**
+(Token geht verloren oder kommt nie zurück).
+
+**Default: OFF.** Wird vor Payload-Exit via NUMBER_PICKER abgefragt. Nummer
+**nur in `config.json` auf dem Mudi** eintragen (gitignored), nie im Repo.
+
+### CYT Cross-Report Integration
+`cyt/python/cross_report.py` — neue Sektionen:
+
+- **📡 Baseband Anomalies** (RAT_DOWNGRADE, CIPHER_PLAINTEXT, TA_ANOMALY,
+  TAC_CHANGE, NEIGHBORS_VANISHED, CELL_ID_ZERO) mit Bewertungs-Text
+- **📨 Covert SMS** (SILENT_SMS, SIM_DATA_DOWNLOAD, ME_DATA_DOWNLOAD,
+  FLASH_SMS, BINARY_SMS)
+
+Beide Sektionen erscheinen in **jedem** Scan-Modus 5/6 — unabhängig davon ob
+WiFi/BT-Verdächtige gefunden wurden.
+
+### Warum kein Null-Paging-Detector?
+SnoopSnitch erkennt auch **Null-Paging** (leere Paging-Requests an den eigenen
+TMSI, Vorstufe eines Silent-Ping). Dies ist baseband-intern und über AT-Commands
+nicht zugänglich — weder das EC25 noch das EM050-G exponieren Paging-Frames.
+Ehrlich nicht implementiert statt mit Fake-Signal vorgetäuscht.
 
 ---
 
@@ -72,6 +138,10 @@ Schützt vor IMSI-Catcher-basierter Geräte-Identifikation und Bewegungsprofilen
 | **6** | **Hotel Scan 2** | Spy-Kameras + IMSI-Catcher | Pager + Mudi |
 
 Modi 5 und 6 benötigen den Mudi V2 (GL-E750V2) mit laufendem raypager.
+
+> **Neu ab v1.3:** IMSI-Catcher-Monitor und Silent-SMS-Watcher laufen in **allen**
+> Modi automatisch im Hintergrund, sobald der Mudi erreichbar ist. Anomalien
+> erscheinen direkt im Cross-Report.
 
 ---
 

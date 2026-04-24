@@ -80,5 +80,26 @@
   "_comment_uwl": "UnwiredLabs (LocationAPI) — Zweite Cell-Tower-Quelle, kostenloser Free-Tier (100/Tag)",
   "unwiredlabs": {
     "token": ""
+  },
+
+  "_comment_imsi": "IMSI-Catcher-Monitor — läuft IMMER passiv im Hintergrund wenn Mudi erreichbar",
+  "imsi_monitor": {
+    "interval_s": 30,
+    "ta_weak_rsrp_threshold": -100
+  },
+
+  "_comment_sms": "Silent-SMS-Watcher — läuft STANDARDMÄSSIG. Auf false setzen um komplett abzuschalten.",
+  "silent_sms": {
+    "watch_on_start":  true,
+    "watch_interval_s": 60,
+    "purge_binary":    false
+  },
+
+  "_comment_loopback": "SMS MO/MT Loopback (Self-SMS) — OPT-IN. Wird im Payload-Menü vor Exit erneut abgefragt.",
+  "sms_loopback": {
+    "enabled":        false,
+    "test_number":    null,
+    "timeout_s":      180,
+    "latency_warn_s": 30
   }
 }

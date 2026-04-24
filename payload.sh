@@ -93,6 +93,186 @@ check_mudi(){ mudi "echo ok" | grep -q "ok"; }
 spin_start() { START_SPINNER "$1"; }
 spin_stop()  { STOP_SPINNER "$1" 2>/dev/null; STOP_SPINNER 2>/dev/null; }
 
+# ── Passive IMSI-Catcher + Silent-SMS Background Daemons ──────────────────────
+# IMSI-Monitor läuft IMMER wenn Mudi erreichbar, in jedem Scan-Modus.
+# Silent-SMS-Watcher nur wenn config.silent_sms.watch_on_start=true.
+# Ergebnisse fließen in rat_history.json → cross_report.py.
+IMSI_POLL_INTERVAL=30
+SMS_POLL_INTERVAL=60
+
+_cfg_sms_watch() {
+    # Default TRUE — Silent-SMS-Watcher läuft immer, außer explizit abgeschaltet
+    python3 -c "
+import json
+try:
+    c=json.load(open('$CONFIG'))
+    v=c.get('silent_sms',{}).get('watch_on_start', True)
+    print('false' if v is False else 'true')
+except: print('true')
+" 2>/dev/null
+}
+
+_cfg_loopback_enabled() {
+    python3 -c "
+import json
+try:
+    c=json.load(open('$CONFIG'))
+    print('true' if c.get('sms_loopback',{}).get('enabled') else 'false')
+except: print('false')
+" 2>/dev/null
+}
+
+imsi_daemon_start() {
+    check_mudi || return 1
+    # OpenWrt on Mudi has no nohup; use &-backgrounding with full FD redirection
+    # and start-stop-daemon to fully detach (otherwise ssh session won't return).
+    mudi "pkill -f 'imsi_monitor.py' 2>/dev/null; sleep 0.3; \
+          start-stop-daemon -S -b -m -p /tmp/imsi_monitor.pid \
+            -x /usr/bin/python3 -- $MUDI_PY/imsi_monitor.py --interval $IMSI_POLL_INTERVAL \
+            > /root/loot/raypager/imsi_monitor.log 2>&1"
+    sleep 0.5
+    local pid
+    pid=$(mudi "cat /tmp/imsi_monitor.pid 2>/dev/null" | tr -d '[:space:]')
+    [ -n "$pid" ] && mudi "kill -0 $pid 2>/dev/null"
+}
+
+sms_daemon_start() {
+    check_mudi || return 1
+    mudi "pkill -f 'silent_sms.py --watch' 2>/dev/null; sleep 0.3; \
+          python3 $MUDI_PY/silent_sms.py --enable-urc >/dev/null 2>&1; \
+          start-stop-daemon -S -b -m -p /tmp/silent_sms.pid \
+            -x /usr/bin/python3 -- $MUDI_PY/silent_sms.py --watch $SMS_POLL_INTERVAL \
+            > /root/loot/raypager/silent_sms_watcher.log 2>&1"
+    sleep 0.5
+    local pid
+    pid=$(mudi "cat /tmp/silent_sms.pid 2>/dev/null" | tr -d '[:space:]')
+    [ -n "$pid" ] && mudi "kill -0 $pid 2>/dev/null"
+}
+
+daemons_stop() {
+    check_mudi || return 0
+    mudi "start-stop-daemon -K -p /tmp/imsi_monitor.pid 2>/dev/null; \
+          start-stop-daemon -K -p /tmp/silent_sms.pid 2>/dev/null; \
+          pkill -f 'imsi_monitor.py' 2>/dev/null; \
+          pkill -f 'silent_sms.py --watch' 2>/dev/null; \
+          rm -f /tmp/imsi_monitor.pid /tmp/silent_sms.pid" 2>/dev/null
+}
+
+# ── SMS Loopback UI (opt-in per Menü, unabhängig vom config.enabled Flag) ────
+_sms_loopback_ui() {
+    check_mudi || return 0
+
+    LOG ""
+    LOG blue "━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    LOG blue "   SMS Loopback-Test"
+    LOG blue "━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    LOG "Sendet SMS an eigene Nummer und"
+    LOG "misst Empfang — erkennt Interception."
+    LOG yellow "⚠ Kostet 1 SMS (Provider-Tarif)"
+    LOG ""
+
+    local pick
+    pick=$(NUMBER_PICKER "1=Überspringen 2=Test durchführen:" 1)
+    [ $? -ne 0 ] && pick=1
+    [ "$pick" -ne 2 ] && { LOG "  Loopback-Test übersprungen"; return 0; }
+
+    LED blue
+    local spid
+    spid=$(spin_start "Loopback (bis zu 3min)...")
+    local out
+    out=$(mudi_py "sms_loopback.py" "--force" 2>/dev/null)
+    spin_stop "$spid"
+
+    local result latency reason
+    result=$(echo "$out" | python3 -c "import json,sys;d=json.load(sys.stdin);print(d.get('result','?'))" 2>/dev/null)
+    latency=$(echo "$out" | python3 -c "import json,sys;d=json.load(sys.stdin);print(d.get('latency_s','-'))" 2>/dev/null)
+    reason=$(echo "$out"  | python3 -c "import json,sys;d=json.load(sys.stdin);print(d.get('reason',''))" 2>/dev/null)
+
+    case "$result" in
+        OK)         LED green;  LOG green  "✓ Loopback OK (Latenz: ${latency}s)" ;;
+        SUSPICIOUS) LED orange; LOG orange "⚠ SUSPICIOUS — $reason"; VIBRATE 500 ;;
+        *)          LED red;    LOG red    "✗ $result — $reason"; VIBRATE 500 ;;
+    esac
+    sleep 1
+}
+
+# ── Argus Security Summary (wird VOR Cross-Report ausgegeben) ────────────────
+argus_security_summary() {
+    check_mudi || return 0
+
+    # IMSI-Alerts aus imsi_alerts.jsonl (letzte 2h)
+    local imsi_alerts
+    imsi_alerts=$(mudi "python3 -c \"
+import json, time
+cutoff = time.time() - 7200
+out = []
+try:
+    with open('/root/loot/raypager/imsi_alerts.jsonl') as f:
+        for line in f:
+            try:
+                a = json.loads(line)
+                import datetime as dt
+                ts = dt.datetime.fromisoformat(a['timestamp'].rstrip('Z')).timestamp()
+                if ts < cutoff: continue
+                out.append(a)
+            except: pass
+except FileNotFoundError: pass
+print(json.dumps(out))
+\"" 2>/dev/null)
+
+    local silent_sms_flags
+    silent_sms_flags=$(mudi "python3 -c \"
+import json, time
+cutoff = time.time() - 7200
+out = []
+try:
+    with open('/root/loot/raypager/silent_sms.jsonl') as f:
+        for line in f:
+            try:
+                e = json.loads(line)
+                import datetime as dt
+                ts = dt.datetime.fromisoformat(e['timestamp'].rstrip('Z')).timestamp()
+                if ts < cutoff: continue
+                out.append(e)
+            except: pass
+except FileNotFoundError: pass
+print(json.dumps(out))
+\"" 2>/dev/null)
+
+    local alert_count flag_count
+    alert_count=$(echo "$imsi_alerts" | python3 -c "import json,sys;print(len(json.load(sys.stdin)))" 2>/dev/null)
+    flag_count=$(echo "$silent_sms_flags" | python3 -c "import json,sys;print(len(json.load(sys.stdin)))" 2>/dev/null)
+
+    LOG blue "━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    LOG blue "   IMSI / SMS Security"
+    LOG blue "━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+    if [ "${alert_count:-0}" -gt 0 ]; then
+        LOG red "⚠ IMSI-Catcher-Alerts: $alert_count"
+        echo "$imsi_alerts" | python3 -c "
+import json, sys
+for a in json.load(sys.stdin)[-5:]:
+    print(f\"  [{a.get('severity','?')}] {a.get('type','?')}: {a.get('message','')}\")" 2>/dev/null \
+            | while IFS= read -r line; do LOG red "$line"; done
+        VIBRATE 500; sleep 0.2; VIBRATE 500
+    else
+        LOG green "✓ Keine IMSI-Catcher-Anomalien"
+    fi
+
+    if [ "${flag_count:-0}" -gt 0 ]; then
+        LOG red "⚠ Covert SMS: $flag_count"
+        echo "$silent_sms_flags" | python3 -c "
+import json, sys
+for e in json.load(sys.stdin)[-3:]:
+    flags = ','.join(e.get('flags',[]))
+    print(f\"  {flags} from {e.get('sender','?')}\")" 2>/dev/null \
+            | while IFS= read -r line; do LOG red "$line"; done
+    else
+        LOG green "✓ Keine Silent/Binary SMS"
+    fi
+    LOG ""
+}
+
 # ── JSON-Field-Helper (läuft auf Pager) ───────────────────────────────────────
 jget() {
     echo "$1" | python3 -c \
@@ -1195,6 +1375,32 @@ ntpd -q -p pool.ntp.org 2>/dev/null && \
 
 spin_stop "$SPINNER_ID"
 
+# ── IMSI-Catcher-Daemon + optional SMS-Watcher ────────────────────────────────
+# IMSI-Monitor läuft passiv im Hintergrund während ALLER Scan-Modi und schreibt
+# Samples in rat_history.json. cross_report.py liest die Anomalien und macht
+# daraus den Security-Abschnitt im Argus-Report.
+if check_mudi; then
+    if imsi_daemon_start; then
+        LOG green "✓ IMSI-Monitor aktiv (${IMSI_POLL_INTERVAL}s poll)"
+    else
+        LOG yellow "⚠ IMSI-Monitor konnte nicht starten"
+    fi
+
+    # Silent-SMS-Watcher läuft immer (außer config.silent_sms.watch_on_start=false)
+    if [ "$(_cfg_sms_watch)" = "true" ]; then
+        if sms_daemon_start; then
+            LOG green "✓ Silent-SMS-Watcher aktiv (${SMS_POLL_INTERVAL}s poll)"
+        else
+            LOG yellow "⚠ Silent-SMS-Watcher konnte nicht starten"
+        fi
+    else
+        LOG yellow "  Silent-SMS-Watcher in config deaktiviert"
+    fi
+else
+    LOG yellow "⚠ Mudi nicht erreichbar — IMSI-Monitor übersprungen"
+fi
+sleep 1
+
 # Cleanup alter Scan-Daten
 python3 "$CYT_PY/cleanup.py" --config "$CONFIG" 2>/dev/null \
     | grep "^CLEANUP:" | cut -d: -f2- \
@@ -1270,6 +1476,10 @@ else
             ;;
     esac
 fi
+
+argus_security_summary
+_sms_loopback_ui
+daemons_stop
 
 _upload_ui
 _imei_change_ui
